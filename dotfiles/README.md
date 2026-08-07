@@ -174,11 +174,13 @@ rm ~/.tmux.conf          # only if it is the symlink created above
   shell: `tmux source-file ~/.tmux.conf`.
 
 ### True color
-tmux advertises true color to WezTerm via
-`terminal-overrides ",xterm-256color:Tc"` and `",wezterm:Tc"`, with
-`default-terminal "tmux-256color"` **inside** tmux. This uses the widely
-supported `Tc` capability rather than the newer `terminal-features` option, so
-it works on older tmux too. If colors look wrong:
+tmux advertises true color through `terminal-overrides
+",xterm-256color:Tc"`, with `default-terminal "tmux-256color"` **inside**
+tmux. WezTerm uses `xterm-256color` by default. The additional `wezterm:Tc`
+override supports users who explicitly install WezTerm's terminfo and opt into
+`TERM=wezterm`. This uses the widely supported `Tc` capability rather than the
+newer `terminal-features` option, so it works on older tmux too. If colors look
+wrong:
 - Confirm your system has the `tmux-256color` terminfo entry
   (`infocmp tmux-256color >/dev/null`). If not, change `default-terminal` to
   `screen-256color` in `tmux/tmux.conf`.
@@ -187,9 +189,10 @@ it works on older tmux too. If colors look wrong:
 
 ### Clipboard
 Copying in tmux copy mode uses tmux's `set-clipboard on`, which emits **OSC 52**
-escape sequences. WezTerm honors OSC 52, so yanks reach your **local** system
-clipboard even over SSH — no `pbcopy`/`xclip`/`wl-copy` helper required. If
-copy does not reach the clipboard:
+escape sequences. WezTerm honors OSC 52, so local tmux yanks reach your system
+clipboard without a `pbcopy`/`xclip`/`wl-copy` helper. Over SSH, the remote tmux
+must also support and enable `set-clipboard` (tmux 2.6+). If copy does not reach
+the clipboard:
 - Ensure you are copying **inside** tmux copy mode (`prefix [`, select with
   `v`, yank with `y`).
 - Confirm `set-clipboard` is `on` (`tmux show -g set-clipboard`).
