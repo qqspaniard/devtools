@@ -111,9 +111,14 @@ _zi_find_plugin() {
   if command -v brew >/dev/null 2>&1; then
     local brew_prefix
     brew_prefix=$(brew --prefix "$formula" 2>/dev/null)
-    if [[ -n $brew_prefix && -r $brew_prefix/$relfile ]]; then
-      print -r -- "$brew_prefix/$relfile"
-      return 0
+    if [[ -n $brew_prefix ]]; then
+      if [[ -r $brew_prefix/share/$formula/$relfile ]]; then
+        print -r -- "$brew_prefix/share/$formula/$relfile"
+	return 0
+      elif [[ -r $brew_prefix/$relfile ]]; then
+        print -r -- "$brew_prefix/$relfile"
+	return 0
+      fi
     fi
   fi
 
