@@ -37,6 +37,25 @@ function M.apply(config)
     action = act.SendString '\n',
   })
 
+  -- Option+Left / Option+Right -> hop backward/forward one word at the shell.
+  --
+  -- Remap to ALT-b / ALT-f, the emacs-style word motions that readline (zsh,
+  -- bash) and most line editors honor -- matching iTerm2 / Terminal.app defaults.
+  -- This is WezTerm's own documented recipe for this exact gap. Scope is the
+  -- shell: inside nvim these send Esc-prefixed sequences (use w/b there instead).
+  -- Option+Delete (backward-kill-word) already works via WezTerm's defaults, so
+  -- it is intentionally left alone.
+  table.insert(config.keys, {
+    key = 'LeftArrow',
+    mods = 'OPT',
+    action = act.SendKey { key = 'b', mods = 'ALT' },
+  })
+  table.insert(config.keys, {
+    key = 'RightArrow',
+    mods = 'OPT',
+    action = act.SendKey { key = 'f', mods = 'ALT' },
+  })
+
   return config
 end
 
