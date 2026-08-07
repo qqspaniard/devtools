@@ -1,0 +1,109 @@
+package policy
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestStateMachineHappyPath(t *testing.T) {
+	// draft -> awaiting_approval -> approved -> running -> review -> completed
+	steps := []struct {
+		from State
+		t    Transition
+		want State
+	}{
+		{StateDraft, TransitionPublish, StateAwaitingApproval},
+		{StateAwaitingApproval, TransitionApprove, StateApproved},
+		{StateApproved, TransitionClaim, StateRunning},
+		{StateRunning, TransitionReview, StateReview},
+		{StateReview, TransitionComplete, StateCompleted},
+	}
+	for _, s := range steps {
+		got, err := Next(s.from, s.t)
+		if err != nil {
+			t.Fatalf("Next(%s,%s): unexpected error %v", s.from, s.t, err)
+		}
+		if got != s.want {
+			t.Fatalf("Next(%s,%s)=%s want %s", s.from, s.t, got, s.want)
+		}
+	}
+}
+
+func TestStateMachineBranches(t *testing.T) {
+	cases := []struct {
+		from State
+		t    Transition
+		want State
+	}{
+		{StateAwaitingApproval, TransitionReject, StateRejected},
+		{StateAwaitingApproval, TransitionRequestEdit, StateDraft},
+		{StateApproved, TransitionExpire, StateExpired},
+		{StateRunning, TransitionCancel, StateCompleted},
+		{StateRunning, TransitionFail, StateCompleted},
+		{StateReview, TransitionRevise, StateDraft},
+	}
+	for _, c := range cases {
+		got, err := Next(c.from, c.t)
+		if err != nil {
+			t.Fatalf("Next(%s,%s): %v", c.from, c.t, err)
+		}
+		if got != c.want {
+			t.Fatalf("Next(%s,%s)=%s want %s", c.from, c.t, got, c.want)
+		}
+	}
+}
+
+func TestStateMachineRejectsInvalidTransitions(t *testing.T) {
+	cases := []struct {
+		from State
+		t    Transition
+	}{
+		{StateDraft, TransitionApprove},          // can't approve a draft
+		{StateDraft, TransitionClaim},            // can't claim a draft
+		{StateAwaitingApproval, TransitionClaim}, // must be approved first
+		{StateApproved, TransitionReview},        // must claim (run) before review
+		{StateRejected, TransitionPublish},       // terminal
+		{StateExpired, TransitionClaim},          // terminal
+		{StateCompleted, TransitionRevise},       // terminal
+		{StateRunning, TransitionApprove},        // nonsensical
+	}
+	for _, c := range cases {
+		_, err := Next(c.from, c.t)
+		if err == nil {
+			t.Fatalf("expected rejection of %s from %s", c.t, c.from)
+		}
+		var ite *InvalidTransitionError
+		if !errors.As(err, &ite) {
+			t.Fatalf("expected *InvalidTransitionError, got %T", err)
+		}
+	}
+}
+
+func TestStateMachineRejectsUnknownState(t *testing.T) {
+	_, err := Next(State("bogus"), TransitionPublish)
+	if err == nil {
+		t.Fatal("expected rejection of unknown state")
+	}
+}
+
+func TestTerminalStates(t *testing.T) {
+	for _, s := range []State{StateRejected, StateExpired, StateCompleted} {
+		if !IsTerminal(s) {
+			t.Fatalf("%s should be terminal", s)
+		}
+	}
+	for _, s := range []State{StateDraft, StateAwaitingApproval, StateApproved, StateRunning, StateReview} {
+		if IsTerminal(s) {
+			t.Fatalf("%s should not be terminal", s)
+		}
+	}
+}
+
+func TestIsValidState(t *testing.T) {
+	if !IsValidState(StateDraft) {
+		t.Fatal("draft should be valid")
+	}
+	if IsValidState(State("nope")) {
+		t.Fatal("unknown state should be invalid")
+	}
+}
