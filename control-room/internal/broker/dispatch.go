@@ -50,6 +50,8 @@ func (b *Broker) dispatch(raw []byte) Response {
 		return b.opDecisionPoll(req.Payload)
 	case OpApprovalClaim:
 		return b.opApprovalClaim(req.Payload)
+	case OpSessionOpen:
+		return b.opSessionOpen(req.Payload)
 	default:
 		return errResponse(CodeUnknownOp, fmt.Sprintf("unhandled op %q", req.Op))
 	}
@@ -141,6 +143,26 @@ func (b *Broker) opApprovalClaim(payload json.RawMessage) Response {
 		return mapStoreErr(err)
 	}
 	return okResponse(ApprovalClaimResult{Approval: res.Approval, ClaimSeq: res.ClaimSeq})
+}
+
+func (b *Broker) opSessionOpen(payload json.RawMessage) Response {
+	var p SessionOpenRequest
+	if err := decodePayload(payload, &p); err != nil {
+		return errResponse(CodeBadRequest, err.Error())
+	}
+	// Confirm the session exists before minting a review capability for it.
+	if _, err := b.store.GetSession(p.SessionID); err != nil {
+		return mapStoreErr(err)
+	}
+	issuer := b.bootstrapIssuer()
+	if issuer == nil {
+		return errResponse(CodeInternal, "web server not available; start the broker with `serve`")
+	}
+	url, err := issuer.IssueBootstrap(p.SessionID)
+	if err != nil {
+		return errResponse(CodeInternal, err.Error())
+	}
+	return okResponse(SessionOpenResult{URL: url})
 }
 
 // --- response helpers ---

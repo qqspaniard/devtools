@@ -32,8 +32,17 @@ type Broker struct {
 	// server starts, used to build session review URLs returned to clients.
 	mu         sync.RWMutex
 	webBaseURL string
+	issuer     BootstrapIssuer
 
 	ln net.Listener
+}
+
+// BootstrapIssuer mints a one-time browser review URL for a session. The web
+// server implements it. It is an interface so the broker package does not
+// import the web package (avoiding an import cycle and keeping the broker
+// unaware of HTTP details).
+type BootstrapIssuer interface {
+	IssueBootstrap(sessionID string) (string, error)
 }
 
 // Config configures a Broker.
@@ -64,6 +73,20 @@ func (b *Broker) SetWebBaseURL(u string) {
 	b.mu.Lock()
 	b.webBaseURL = u
 	b.mu.Unlock()
+}
+
+// SetBootstrapIssuer wires the web server's bootstrap issuer so session.open can
+// mint review URLs.
+func (b *Broker) SetBootstrapIssuer(i BootstrapIssuer) {
+	b.mu.Lock()
+	b.issuer = i
+	b.mu.Unlock()
+}
+
+func (b *Broker) bootstrapIssuer() BootstrapIssuer {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.issuer
 }
 
 func (b *Broker) webBase() string {

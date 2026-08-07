@@ -145,6 +145,19 @@ func (c *Client) ApprovalClaim(sessionID, digest string) (json.RawMessage, error
 	return c.call(OpApprovalClaim, ApprovalClaimRequest{SessionID: sessionID, Digest: digest})
 }
 
+// SessionOpen mints a one-time browser review URL for a session.
+func (c *Client) SessionOpen(sessionID string) (string, error) {
+	raw, err := c.call(OpSessionOpen, SessionOpenRequest{SessionID: sessionID})
+	if err != nil {
+		return "", err
+	}
+	var res SessionOpenResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return "", err
+	}
+	return res.URL, nil
+}
+
 // Ping reports whether a broker is answering on the socket by issuing a cheap
 // session.get for a non-existent id: a not_found response proves the broker is
 // alive and authenticated. A dial/auth failure returns an error.

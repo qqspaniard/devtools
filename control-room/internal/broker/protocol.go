@@ -32,11 +32,13 @@ const (
 	OpPlanPublish   Op = "plan.publish"
 	OpDecisionPoll  Op = "decision.poll"
 	OpApprovalClaim Op = "approval.claim"
+	OpSessionOpen   Op = "session.open"
 )
 
 var validOps = map[Op]struct{}{
 	OpSessionCreate: {}, OpSessionGet: {}, OpSessionEnd: {},
 	OpPlanPublish: {}, OpDecisionPoll: {}, OpApprovalClaim: {},
+	OpSessionOpen: {},
 }
 
 // Request is the envelope for every control-channel call. Secret authenticates
@@ -133,6 +135,18 @@ type ApprovalClaimRequest struct {
 type ApprovalClaimResult struct {
 	Approval interface{} `json:"approval"`
 	ClaimSeq int         `json:"claim_seq"`
+}
+
+// SessionOpenRequest asks the broker to mint a one-time browser review URL for
+// a session.
+type SessionOpenRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+// SessionOpenResult carries the loopback review URL a browser should open. The
+// URL embeds a single-use, expiring bootstrap capability.
+type SessionOpenResult struct {
+	URL string `json:"url"`
 }
 
 // decodePayload strictly decodes a request payload into v, rejecting unknown
