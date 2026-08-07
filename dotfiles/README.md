@@ -9,6 +9,11 @@ terminal emulator with [tmux](https://github.com/tmux/tmux) as the multiplexer.
 It targets macOS, Linux, and WSL, avoids plugins, and installs by symlinking the
 files in this repo into place.
 
+Alongside it is an optional, framework-free **zsh interactive fragment**
+(`zsh/interactive.zsh`) that layers native completion, fzf key-bindings, and two
+optional zsh plugins onto your existing shell — without taking over your
+`.zshrc`. See [zsh interactive fragment](#zsh-interactive-fragment).
+
 ## Current scope: WezTerm + tmux
 
 - **Layers stay independent.** WezTerm draws the window; tmux manages panes,
@@ -17,7 +22,7 @@ files in this repo into place.
   own.
 - **tmux owns the multiplexing UI.** WezTerm's tab bar is disabled so tmux's
   status line is the only one you see. WezTerm keeps its default keybindings;
-  it does not bind `Ctrl-b`, so the tmux prefix reaches tmux naturally.
+  it does not bind `Ctrl-Space`, so the tmux prefix reaches tmux naturally.
 - **No plugins, no theme files, no TPM.** Everything uses built-in WezTerm and
   tmux features. See [Why no plugins](#why-plugins-are-deferred).
 - **Portable and non-destructive.** Paths are derived from the repo location;
@@ -32,9 +37,12 @@ dotfiles/
 ├── wezterm/
 │   ├── wezterm.lua      # entry point (config_builder + module composition)
 │   ├── appearance.lua   # scheme, font, opacity, macOS blur, tab bar
-│   └── keybindings.lua  # intentionally minimal (keeps tmux's Ctrl-b free)
-└── tmux/
-    └── tmux.conf        # prefix, splits, navigation, clipboard, status bar
+│   └── keybindings.lua  # intentionally minimal (keeps Ctrl-Space free)
+├── tmux/
+│   └── tmux.conf        # prefix, splits, navigation, clipboard, status bar
+└── zsh/
+    └── interactive.zsh  # optional: completion + fzf + autosuggestions +
+                         # syntax-highlighting (you add one source line)
 ```
 
 ## Prerequisites
@@ -44,6 +52,10 @@ dotfiles/
 | WezTerm | terminal emulator | required to use the WezTerm config |
 | tmux | multiplexer | 3.0+ recommended; the config is written to work on older versions too |
 | Hack Nerd Font | font | optional but recommended; WezTerm falls back to a system font if absent |
+| zsh | shell | required only for the optional `zsh/interactive.zsh` fragment |
+| fzf | fuzzy finder | optional; needs `fzf --zsh` support (fzf ≥ 0.48) for the fragment's key-bindings |
+| zsh-autosuggestions | inline suggestions | optional plugin; enables suggestions + Ctrl-f accept |
+| zsh-syntax-highlighting | command highlighting | optional plugin; loaded last |
 
 The installer checks for these and prints platform-specific install
 suggestions for anything missing. It never installs anything itself.
@@ -56,10 +68,16 @@ From anywhere:
 sh /path/to/dotfiles/install.sh
 ```
 
-This creates two symlinks:
+This creates three symlinks:
 
 - `~/.config/wezterm` → `<repo>/dotfiles/wezterm` (the **whole directory**)
 - `~/.tmux.conf` → `<repo>/dotfiles/tmux/tmux.conf`
+- `~/.config/zsh` → `<repo>/dotfiles/zsh` (the **whole directory**)
+
+**The installer does NOT edit your `~/.zshrc`.** Linking `~/.config/zsh` only
+puts the fragment in place; you activate it by adding one `source` line yourself
+(see [zsh interactive fragment](#zsh-interactive-fragment)). Your `~/.zshrc`
+stays entirely yours and untracked.
 
 **Why link the whole `wezterm` directory?** `wezterm.lua` is modular and
 `require`s its siblings (`appearance`, `keybindings`). Linking the entire
@@ -111,6 +129,7 @@ To unlink manually:
 ```sh
 rm ~/.config/wezterm     # only if it is the symlink created above
 rm ~/.tmux.conf          # only if it is the symlink created above
+rm ~/.config/zsh         # only if it is the symlink created above
 ```
 
 (`rm` on a symlink removes the link, not the repo files it points to.)
@@ -169,7 +188,7 @@ rm ~/.tmux.conf          # only if it is the symlink created above
 - **WezTerm** re-reads its config automatically on save. If it looks like a
   change did not apply, run the `--config-file … ls-fonts` check above to see
   the parse error, or open the debug overlay (Ctrl-Shift-L).
-- **tmux** does not reload automatically. Press **`prefix r`** (Ctrl-b then r);
+- **tmux** does not reload automatically. Press **`prefix r`** (Ctrl-Space then r);
   you should see `tmux.conf reloaded` in the status line. To reload from a
   shell: `tmux source-file ~/.tmux.conf`.
 
@@ -205,6 +224,135 @@ background equal to the window background, making selections hard to see.
 `appearance.lua` overrides just the selection colors to fix this. If a future
 WezTerm corrects the built-in scheme, that override can be removed.
 
+## zsh interactive fragment
+
+`zsh/interactive.zsh` is an **optional**, framework-free fragment that adds
+interactive niceties to zsh without owning your shell config. It is a
+**sourceable fragment, not a `.zshrc`**: your prompt, aliases, `PATH`,
+environment, and anything machine-specific or sensitive stay in your own local,
+untracked `~/.zshrc`. This repo tracks only the shared, portable fragment.
+
+### What it does (in order)
+
+1. **Native completion.** Runs `autoload -Uz compinit && compinit`, but only if
+   completion is not already initialized in the shell (it checks for the
+   `compdef` function). If your framework or a prior line already set completion
+   up, it is not redone.
+2. **fzf integration.** If `fzf` is on `PATH` and supports `fzf --zsh`, it
+   sources that integration for fuzzy history (Ctrl-r) and completion. Older fzf
+   without `fzf --zsh` is skipped silently — no startup error.
+3. **zsh-autosuggestions** (optional). Loads it if found, and binds **Ctrl-f**
+   (`^F`) to `autosuggest-accept` — but only when that widget actually exists.
+4. **zsh-syntax-highlighting** (optional). Loaded **last**, which is an upstream
+   requirement so it can wrap all other widgets.
+
+Missing optional tools simply mean the corresponding feature is absent. Normal
+startup stays silent. The fragment does **not** install packages, git-clone
+plugins, change your prompt, set aliases/environment, or load secrets. It also
+returns immediately if sourced from a non-interactive shell, so it is safe in
+scripts.
+
+### One-time setup
+
+1. Install the fragment link (once): `sh dotfiles/install.sh` creates
+   `~/.config/zsh` → `<repo>/dotfiles/zsh`. **This does not touch `~/.zshrc`.**
+2. Add exactly **one line** to your own `~/.zshrc` (you do this manually):
+
+   ```sh
+   source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"
+   ```
+
+3. Reload your shell:
+
+   ```sh
+   exec zsh
+   ```
+
+### Install the optional packages
+
+**macOS (Homebrew):**
+
+```sh
+brew install fzf zsh-autosuggestions zsh-syntax-highlighting
+```
+
+**Linux:** package names vary by distro; there is no guarantee a given name
+exists on yours. Common examples:
+
+```sh
+# Debian/Ubuntu
+sudo apt install fzf zsh-autosuggestions zsh-syntax-highlighting
+# Arch
+sudo pacman -S fzf zsh-autosuggestions zsh-syntax-highlighting
+# Fedora
+sudo dnf install fzf zsh-autosuggestions zsh-syntax-highlighting
+```
+
+Or install upstream manually:
+<https://github.com/zsh-users/zsh-autosuggestions> and
+<https://github.com/zsh-users/zsh-syntax-highlighting>.
+
+### How the fragment finds the plugins
+
+It does **not** hard-code any Homebrew prefix. For each plugin it looks, in
+order, at:
+
+1. An **override directory** you set (the escape hatch for unusual layouts):
+   - `ZSH_AUTOSUGGEST_DIR` — dir containing `zsh-autosuggestions.zsh`
+   - `ZSH_SYNTAX_HIGHLIGHTING_DIR` — dir containing
+     `zsh-syntax-highlighting.zsh`
+2. **Homebrew**, via `brew --prefix <formula>` — this resolves correctly on
+   Apple Silicon (`/opt/homebrew`), Intel macOS (`/usr/local`), and Linuxbrew
+   without assuming a prefix. (Note: `brew --prefix` prints a path even for an
+   *uninstalled* formula, so the fragment verifies the file is actually readable
+   before sourcing it.)
+3. **Common distro locations**, e.g. `/usr/share/zsh-autosuggestions`,
+   `/usr/share/zsh/plugins/zsh-autosuggestions`, and the
+   `zsh-syntax-highlighting` equivalents.
+
+If none match, the plugin is skipped and startup stays silent.
+
+### Load order
+
+`zsh-syntax-highlighting` **must be sourced last**, after every other
+widget-defining plugin, or it will not highlight correctly. The fragment
+enforces this ordering internally: completion → fzf → autosuggestions →
+**syntax highlighting (last)**. Keep the single `source ".../interactive.zsh"`
+line at or near the end of your `~/.zshrc`, after anything else that defines zle
+widgets.
+
+### If you already source fzf yourself
+
+If your `~/.zshrc` already contains `source <(fzf --zsh)` (or the legacy
+`~/.fzf.zsh`), **remove or comment that line** before sourcing this fragment, so
+fzf is not initialized twice. The fragment makes a best effort to detect an
+already-loaded fzf (it checks for fzf's `fzf-history-widget`) and skip
+re-sourcing, but removing the duplicate line is the reliable fix.
+
+### Verifying it works
+
+- Reload: `exec zsh`.
+- Type a previously used command; if `zsh-autosuggestions` is installed you
+  should see a dimmed inline suggestion. Press **Ctrl-f** to accept it.
+- Type a command name; with `zsh-syntax-highlighting` installed, valid commands
+  are colored differently from unknown ones.
+- Press **Ctrl-r** for fzf history search (if fzf is installed).
+- To see exactly what loaded and what was skipped, turn on debug output:
+
+  ```sh
+  ZSH_INTERACTIVE_DEBUG=1 exec zsh
+  ```
+
+  This prints advisory details for sections that run; normal startup is silent.
+
+### Why your `~/.zshrc` stays untracked
+
+Your personal `~/.zshrc` typically holds machine-specific paths and sensitive
+settings that must **not** live in a shared repo. This design deliberately keeps
+that file yours: the repo tracks only the portable, non-sensitive
+`interactive.zsh` fragment, and you opt in with a single `source` line. The
+installer never reads, edits, or copies your `~/.zshrc`.
+
 ## Configuration summary
 
 **WezTerm** (`wezterm/`)
@@ -213,10 +361,10 @@ WezTerm corrects the built-in scheme, that override can be removed.
 - `Hack Nerd Font`, size 15
 - Window opacity `0.9`; macOS-only background blur `30`
 - Tab bar disabled (tmux is the multiplexer UI)
-- Default keybindings preserved; `Ctrl-b` reaches tmux
+- Default keybindings preserved; `Ctrl-Space` reaches tmux
 
 **tmux** (`tmux/tmux.conf`)
-- Standard `Ctrl-b` prefix
+- `Ctrl-Space` prefix
 - `default-terminal tmux-256color` + `Tc` true-color overrides for WezTerm
 - Mouse on; vi copy mode; OSC 52 system clipboard
 - `base-index 1`, `pane-base-index 1`, `escape-time 10`, `history-limit 10000`
@@ -224,6 +372,14 @@ WezTerm corrects the built-in scheme, that override can be removed.
 - `h/j/k/l` navigate panes; `H/J/K/L` resize; `r` reloads with confirmation
 - Rose Pine Moon-inspired, text-first status bar (session · windows · host ·
   time), readable even without Nerd Font glyphs
+
+**zsh** (`zsh/interactive.zsh`, optional — you add one `source` line)
+- Native completion via `compinit`, skipped if already initialized
+- `fzf --zsh` key-bindings/completion when fzf supports it (else skipped)
+- `zsh-autosuggestions` if found; **Ctrl-f** accepts a suggestion
+- `zsh-syntax-highlighting` loaded **last** (upstream ordering requirement)
+- No prompt, aliases, env, secrets, or plugin manager; silent when optional
+  tools are absent; `ZSH_INTERACTIVE_DEBUG=1` for advisory output
 
 ---
 
@@ -251,7 +407,7 @@ tmux is **not** launched automatically. Open WezTerm, then:
 ```sh
 tmux                 # start your first session
 # ... work, split panes, etc. ...
-# press:  Ctrl-b  then  d      to detach (session keeps running)
+# press:  Ctrl-Space  then  d  to detach (session keeps running)
 tmux attach          # come back to it later
 tmux ls              # list running sessions
 tmux new -s work     # start a named session
@@ -260,7 +416,7 @@ tmux attach -t work  # attach to a named session
 
 ### Cheat sheet
 
-The prefix is **`Ctrl-b`** (written `prefix` below). Press the prefix, release,
+The prefix is **`Ctrl-Space`** (written `prefix` below). Press the prefix, release,
 then the key.
 
 **Sessions**
