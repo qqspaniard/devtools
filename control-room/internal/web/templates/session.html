@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control Room — Review</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <h1>Control Room review</h1>
+
+    <section class="meta">
+      <p><strong>Session:</strong> {{.Session.ID}}</p>
+      <p><strong>State:</strong> {{.Session.State}}</p>
+      <p><strong>Workspace:</strong> {{.Session.WorkspaceName}} ({{.Session.WorkspaceID}})</p>
+      <p><strong>Revision:</strong> {{.Session.CurrentRevision}}</p>
+    </section>
+
+    {{if .Decided}}
+    <section class="decision">
+      <h2>Decision recorded</h2>
+      <p>This revision was <strong>{{.Decision.Kind}}</strong>.</p>
+      {{if .Decision.Reason}}<p>Reason: {{.Decision.Reason}}</p>{{end}}
+      {{if .Decision.ApprovalID}}<p>Approval id: {{.Decision.ApprovalID}}</p>{{end}}
+    </section>
+    {{else if .Plan}}
+    <section class="plan">
+      <h2>{{.Plan.Goal}}</h2>
+      {{if .Plan.Summary}}<p class="summary">{{.Plan.Summary}}</p>{{end}}
+
+      {{if .Plan.Blocks}}
+      <h3>Blocks</h3>
+      {{range .Plan.Blocks}}
+      <div class="block">
+        <div class="block-head">{{.ID}} <span class="kind">[{{.Kind}}]</span></div>
+        <pre class="block-content">{{.Content}}</pre>
+      </div>
+      {{end}}
+      {{end}}
+
+      <form id="decide-form">
+        <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+        <input type="hidden" name="session" value="{{.Session.ID}}">
+        <input type="hidden" name="revision" value="{{.Session.CurrentRevision}}">
+
+        {{if .Actions}}
+        <h3>Actions</h3>
+        <p class="hint">By default all actions are selected. Uncheck any you do not approve.</p>
+        <ul class="actions">
+          {{range .Actions}}
+          <li>
+            <label>
+              <input type="checkbox" class="action-checkbox" value="{{.ID}}" checked>
+              <strong>{{.Title}}</strong>
+              <span class="kind">[{{.Kind}}]</span>
+              <span class="risk">risk: {{.Risk}}</span>
+            </label>
+          </li>
+          {{end}}
+        </ul>
+        {{end}}
+
+        <div class="reason-field">
+          <label for="reason">Reason (required for reject / request changes):</label>
+          <textarea id="reason" name="reason" maxlength="8192" rows="3"></textarea>
+        </div>
+
+        <div class="controls">
+          <button type="button" data-decision="approve" class="approve">Approve selected</button>
+          <button type="button" data-decision="reject" class="reject">Reject</button>
+          <button type="button" data-decision="request_changes" class="request">Request changes</button>
+        </div>
+        <p id="status" class="status" role="status"></p>
+      </form>
+    </section>
+    {{else}}
+    <section><p>No plan has been published for this session yet.</p></section>
+    {{end}}
+
+    {{if .Events}}
+    <section class="timeline">
+      <h3>Event timeline</h3>
+      <ol>
+        {{range .Events}}
+        <li><span class="ts">{{.CreatedAt}}</span> <span class="actor">{{.Actor}}</span> <code>{{.Type}}</code></li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
