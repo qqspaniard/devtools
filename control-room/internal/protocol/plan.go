@@ -369,3 +369,12 @@ func decodeSingleStrictJSON(data []byte, v any) error {
 	}
 	return nil
 }
+
+// DecodeStrict decodes exactly one JSON value into v with the same fail-closed
+// discipline the plan parser uses: unknown object fields and any trailing or
+// additional JSON value are rejected. It is exported so other packages (e.g.
+// the broker control protocol) can decode their own request/response payloads
+// with identical strictness rather than a lenient json.Unmarshal.
+func DecodeStrict(data []byte, v any) error {
+	return decodeSingleStrictJSON(data, v)
+}
