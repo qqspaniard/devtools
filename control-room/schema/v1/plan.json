@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.local/schema/v1/plan.json",
+  "title": "Control Room Plan Revision (v1)",
+  "description": "A single published plan revision on the Control Room agent protocol. This schema is kept in lockstep with internal/protocol/plan.go and internal/protocol/limits.go; a schema/Go divergence is a bug and is checked by internal/protocol/schema_test.go.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "session_id",
+    "revision",
+    "goal",
+    "workspace"
+  ],
+  "properties": {
+    "protocol_version": {
+      "description": "Wire protocol version. This build accepts only 1; other values fail closed.",
+      "type": "integer",
+      "const": 1
+    },
+    "session_id": {
+      "$ref": "#/$defs/opaqueId"
+    },
+    "revision": {
+      "description": "Monotonic revision number, starting at 1.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "goal": {
+      "description": "Human-readable goal of the plan. Approval-relevant.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "summary": {
+      "description": "Optional longer summary. Approval-relevant.",
+      "type": "string",
+      "maxLength": 16384
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "blocks": {
+      "description": "Reviewable content blocks with stable semantic IDs. Block IDs must be unique across the array. Optional: a plan may be informational or question-only and omit blocks, or omit actions; an absent array is equivalent to an empty one.",
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    },
+    "actions": {
+      "description": "Proposed actions. Action IDs must be unique across the array. Optional: an absent array is equivalent to an empty one.",
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    }
+  },
+  "$defs": {
+    "opaqueId": {
+      "description": "An opaque, caller- or broker-supplied identifier. Validated for shape and bounded length only; no entropy is asserted for caller-supplied values.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:/-]+$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name"],
+      "properties": {
+        "id": {
+          "description": "Broker-issued workspace identity. Approval-relevant.",
+          "$ref": "#/$defs/opaqueId"
+        },
+        "display_name": {
+          "description": "Human-facing label. DISPLAY-ONLY: not bound into the approval digest.",
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "content"],
+      "properties": {
+        "id": { "$ref": "#/$defs/opaqueId" },
+        "kind": {
+          "description": "Closed set of block kinds. Unknown kinds fail closed.",
+          "type": "string",
+          "enum": ["markdown", "diff", "question"]
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 131072
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "risk"],
+      "description": "A proposed action. Every field is approval-relevant. Program/args/cwd are permitted only for run_command actions and must be absent/empty for write_patch actions.",
+      "properties": {
+        "id": { "$ref": "#/$defs/opaqueId" },
+        "kind": {
+          "type": "string",
+          "enum": ["write_patch", "run_command"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "targets": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "program": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "args": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "risk": {
+          "type": "string",
+          "enum": ["workspace_read", "workspace_write", "local_process", "network"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "write_patch" } }
+          },
+          "then": {
+            "properties": {
+              "program": { "const": "" },
+              "args": { "maxItems": 0 },
+              "cwd": { "const": "" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "run_command" } }
+          },
+          "then": {
+            "required": ["program"],
+            "properties": {
+              "program": { "minLength": 1 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
