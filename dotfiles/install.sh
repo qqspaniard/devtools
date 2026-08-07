@@ -1,15 +1,22 @@
 #!/bin/sh
-# install.sh -- portable installer for the WezTerm + tmux dotfiles.
+# install.sh -- portable installer for the WezTerm + tmux + zsh dotfiles.
 #
 # What it does:
 #   * Symlinks ~/.config/wezterm  -> <repo>/dotfiles/wezterm   (whole directory)
 #   * Symlinks ~/.tmux.conf       -> <repo>/dotfiles/tmux/tmux.conf
+#   * Symlinks ~/.config/zsh      -> <repo>/dotfiles/zsh       (whole directory)
 #
 # Why a directory symlink for WezTerm: linking the entire wezterm/ directory
 # guarantees the modular `require 'appearance'` / `require 'keybindings'` calls
 # always resolve, in one atomic link. ~/.tmux.conf (rather than
 # ~/.config/tmux/tmux.conf) is used for compatibility with tmux older than 3.1,
 # which only reads the classic path.
+#
+# The zsh directory is linked whole (same rationale as wezterm) so future
+# fragments alongside interactive.zsh resolve in one atomic link. This installer
+# does NOT edit your ~/.zshrc. To activate the fragment, add exactly one line to
+# your own ~/.zshrc (see dotfiles/README.md):
+#   source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"
 #
 # Safety:
 #   * Idempotent: re-running when links already point at the right targets is a
@@ -41,11 +48,13 @@ SCRIPT_DIR=$(cd "$(dirname "$script_path")" && pwd)
 # The repo's dotfiles source directories.
 WEZTERM_SRC="$SCRIPT_DIR/wezterm"
 TMUX_SRC="$SCRIPT_DIR/tmux/tmux.conf"
+ZSH_SRC="$SCRIPT_DIR/zsh"
 
 # Destinations.
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 WEZTERM_DEST="$XDG_CONFIG_HOME/wezterm"
 TMUX_DEST="$HOME/.tmux.conf"
+ZSH_DEST="$XDG_CONFIG_HOME/zsh"
 
 # ---------------------------------------------------------------------------
 # Options
@@ -227,6 +236,28 @@ suggest_install() {
         *) info "download from https://www.nerdfonts.com/font-downloads" ;;
       esac
       ;;
+    zsh_plugins)
+      case $PLATFORM in
+        macos)
+          info "install with: brew install fzf zsh-autosuggestions zsh-syntax-highlighting"
+          ;;
+        linux | wsl)
+          info "package names vary by distro. Common examples:"
+          info "  Debian/Ubuntu: sudo apt install fzf zsh-autosuggestions zsh-syntax-highlighting"
+          info "  Arch:          sudo pacman -S fzf zsh-autosuggestions zsh-syntax-highlighting"
+          info "  Fedora:        sudo dnf install fzf zsh-autosuggestions zsh-syntax-highlighting"
+          info "or install upstream manually:"
+          info "  https://github.com/zsh-users/zsh-autosuggestions"
+          info "  https://github.com/zsh-users/zsh-syntax-highlighting"
+          info "(package availability/names are not guaranteed; verify for your distro.)"
+          ;;
+        *)
+          info "install fzf, zsh-autosuggestions, zsh-syntax-highlighting via your package manager,"
+          info "or from https://github.com/zsh-users/zsh-autosuggestions and"
+          info "https://github.com/zsh-users/zsh-syntax-highlighting"
+          ;;
+      esac
+      ;;
   esac
 }
 
@@ -276,6 +307,106 @@ check_deps() {
     info "If glyphs render as boxes, install Hack Nerd Font manually."
     suggest_install font
   fi
+
+  check_zsh
+}
+
+# ---------------------------------------------------------------------------
+# zsh dependency checks (advisory only).
+# ---------------------------------------------------------------------------
+# Mirrors the discovery logic in dotfiles/zsh/interactive.zsh: an override
+# directory, then `brew --prefix <formula>` (whose printed path is verified to
+# actually contain the file, because brew prints a path and exits 0 even for an
+# UNINSTALLED formula), then common distro locations.
+# Args: <override-dir> <brew-formula> <relative-file> [extra dirs...]
+# Prints the found path on stdout and returns 0, or returns 1 if not found.
+find_zsh_plugin() {
+  override_dir=$1
+  formula=$2
+  relfile=$3
+  shift 3
+
+  if [ -n "$override_dir" ] && [ -r "$override_dir/$relfile" ]; then
+    printf '%s\n' "$override_dir/$relfile"
+    return 0
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix=$(brew --prefix "$formula" 2>/dev/null || true)
+    if [ -n "$brew_prefix" ] && [ -r "$brew_prefix/$relfile" ]; then
+      printf '%s\n' "$brew_prefix/$relfile"
+      return 0
+    fi
+  fi
+
+  for cand in "$@"; do
+    if [ -r "$cand/$relfile" ]; then
+      printf '%s\n' "$cand/$relfile"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+check_zsh() {
+  printf '\nzsh interactive fragment (advisory):\n'
+
+  if command -v zsh >/dev/null 2>&1; then
+    ok "zsh found: $(zsh --version 2>/dev/null || echo present)"
+  else
+    warn "zsh not found on PATH. The interactive.zsh fragment requires zsh."
+    case $PLATFORM in
+      macos) info "macOS ships zsh by default; if missing: brew install zsh" ;;
+      linux | wsl) info "install with your package manager, e.g. 'sudo apt install zsh'" ;;
+      *) info "install zsh via your package manager" ;;
+    esac
+  fi
+
+  # fzf (optional): the fragment uses `fzf --zsh` when supported.
+  if command -v fzf >/dev/null 2>&1; then
+    if fzf --zsh >/dev/null 2>&1; then
+      ok "fzf found with 'fzf --zsh' support: $(fzf --version 2>/dev/null || echo present)"
+    else
+      warn "fzf found but too old for 'fzf --zsh': $(fzf --version 2>/dev/null || echo present)"
+      info "the fragment skips fzf integration on versions without 'fzf --zsh'."
+    fi
+  else
+    warn "fzf not found (optional; enables fuzzy history/completion)."
+  fi
+
+  # zsh-autosuggestions (optional).
+  as_file=$(find_zsh_plugin \
+    "${ZSH_AUTOSUGGEST_DIR:-}" \
+    zsh-autosuggestions \
+    zsh-autosuggestions.zsh \
+    /usr/share/zsh-autosuggestions \
+    /usr/share/zsh/plugins/zsh-autosuggestions \
+    /usr/local/share/zsh-autosuggestions) || as_file=""
+  if [ -n "$as_file" ]; then
+    ok "zsh-autosuggestions found: $as_file"
+  else
+    warn "zsh-autosuggestions not found (optional; enables inline suggestions + Ctrl-f accept)."
+  fi
+
+  # zsh-syntax-highlighting (optional).
+  sh_file=$(find_zsh_plugin \
+    "${ZSH_SYNTAX_HIGHLIGHTING_DIR:-}" \
+    zsh-syntax-highlighting \
+    zsh-syntax-highlighting.zsh \
+    /usr/share/zsh-syntax-highlighting \
+    /usr/share/zsh/plugins/zsh-syntax-highlighting \
+    /usr/local/share/zsh-syntax-highlighting) || sh_file=""
+  if [ -n "$sh_file" ]; then
+    ok "zsh-syntax-highlighting found: $sh_file"
+  else
+    warn "zsh-syntax-highlighting not found (optional; enables command highlighting)."
+  fi
+
+  if [ -z "$as_file" ] || [ -z "$sh_file" ] || ! command -v fzf >/dev/null 2>&1; then
+    suggest_install zsh_plugins
+  fi
+  info "override discovery with ZSH_AUTOSUGGEST_DIR / ZSH_SYNTAX_HIGHLIGHTING_DIR if installed elsewhere."
 }
 
 # ---------------------------------------------------------------------------
@@ -291,6 +422,7 @@ main() {
     rc=0
     unlink_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
     unlink_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+    unlink_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
     exit "$rc"
   fi
 
@@ -299,13 +431,23 @@ main() {
   rc=0
   link_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
   link_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+  link_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
 
-  check_deps
+  # Dependency checks are advisory. Never let a future probe that returns
+  # non-zero abort an otherwise successful install under `set -e`.
+  check_deps || true
 
   if [ "$rc" -ne 0 ]; then
     printf '\nFinished with warnings. See messages above for remediation.\n' >&2
   else
     printf '\nDone.\n'
+    printf '\nTo activate the zsh fragment, add this ONE line to your ~/.zshrc\n'
+    printf '(this installer does NOT edit ~/.zshrc for you):\n'
+    # The parameter expansion below is printed LITERALLY for the user to paste
+    # into their own ~/.zshrc; it must not be expanded here.
+    # shellcheck disable=SC2016
+    printf '  source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"\n'
+    printf 'Then reload with: exec zsh\n'
   fi
   exit "$rc"
 }
