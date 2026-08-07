@@ -107,3 +107,50 @@ func TestIsValidState(t *testing.T) {
 		t.Fatal("unknown state should be invalid")
 	}
 }
+
+func TestCanRepublish(t *testing.T) {
+	// Republish is a broker-level op OUTSIDE the core matrix: it permits some
+	// matrix-terminal states (rejected, expired) but never running/completed.
+	allow := []State{StateDraft, StateAwaitingApproval, StateApproved, StateReview, StateRejected, StateExpired}
+	for _, s := range allow {
+		if !CanRepublish(s) {
+			t.Fatalf("CanRepublish(%s) = false, want true", s)
+		}
+	}
+	deny := []State{StateRunning, StateCompleted, State("bogus")}
+	for _, s := range deny {
+		if CanRepublish(s) {
+			t.Fatalf("CanRepublish(%s) = true, want false", s)
+		}
+	}
+	if RepublishTarget != StateAwaitingApproval {
+		t.Fatalf("RepublishTarget = %s, want awaiting_approval", RepublishTarget)
+	}
+}
+
+func TestCanAdministrativelyEnd(t *testing.T) {
+	// Any known, non-terminal state may be ended; terminal/unknown may not.
+	end := []State{StateDraft, StateAwaitingApproval, StateApproved, StateRunning, StateReview}
+	for _, s := range end {
+		if !CanAdministrativelyEnd(s) {
+			t.Fatalf("CanAdministrativelyEnd(%s) = false, want true", s)
+		}
+	}
+	noEnd := []State{StateRejected, StateExpired, StateCompleted, State("bogus")}
+	for _, s := range noEnd {
+		if CanAdministrativelyEnd(s) {
+			t.Fatalf("CanAdministrativelyEnd(%s) = true, want false", s)
+		}
+	}
+}
+
+func TestRepublishAndEndAreNotMatrixEdges(t *testing.T) {
+	// The republish/end operations live outside Next(); Next must NOT accept
+	// them as transitions (they are broker-level operations, not matrix edges).
+	if _, err := Next(StateRejected, TransitionRepublish); err == nil {
+		t.Fatal("Next must not treat republish as a matrix edge")
+	}
+	if _, err := Next(StateAwaitingApproval, TransitionEnd); err == nil {
+		t.Fatal("Next must not treat end as a matrix edge")
+	}
+}
