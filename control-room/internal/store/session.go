@@ -51,7 +51,11 @@ type Decision struct {
 	Kind       DecisionKind `json:"kind"`
 	Reason     string       `json:"reason,omitempty"`
 	ApprovalID string       `json:"approval_id,omitempty"`
-	CreatedAt  time.Time    `json:"created_at"`
+	// Digest is the approval digest an agent presents to claim. It is populated
+	// only for approve decisions. Surfacing it here lets `decision poll` hand an
+	// adapter everything it needs to claim, without a separate lookup.
+	Digest    string    `json:"digest,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // --- session.create ---

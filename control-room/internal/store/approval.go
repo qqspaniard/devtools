@@ -194,13 +194,16 @@ func (s *Store) getDecisionForRevision(sessionID string, revision int) (*Decisio
 		d          Decision
 		kind       string
 		approvalID sql.NullString
+		digest     sql.NullString
 		created    string
 	)
 	err := s.db.QueryRow(
-		`SELECT session_id, revision, kind, reason, approval_id, created_at
-		 FROM decisions WHERE session_id = ? AND revision = ?`,
+		`SELECT d.session_id, d.revision, d.kind, d.reason, d.approval_id, a.digest, d.created_at
+		 FROM decisions d
+		 LEFT JOIN approvals a ON a.id = d.approval_id
+		 WHERE d.session_id = ? AND d.revision = ?`,
 		sessionID, revision,
-	).Scan(&d.SessionID, &d.Revision, &kind, &d.Reason, &approvalID, &created)
+	).Scan(&d.SessionID, &d.Revision, &kind, &d.Reason, &approvalID, &digest, &created)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -210,6 +213,9 @@ func (s *Store) getDecisionForRevision(sessionID string, revision int) (*Decisio
 	d.Kind = DecisionKind(kind)
 	if approvalID.Valid {
 		d.ApprovalID = approvalID.String
+	}
+	if digest.Valid {
+		d.Digest = digest.String
 	}
 	d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	return &d, nil
