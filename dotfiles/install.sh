@@ -1,0 +1,313 @@
+#!/bin/sh
+# install.sh -- portable installer for the WezTerm + tmux dotfiles.
+#
+# What it does:
+#   * Symlinks ~/.config/wezterm  -> <repo>/dotfiles/wezterm   (whole directory)
+#   * Symlinks ~/.tmux.conf       -> <repo>/dotfiles/tmux/tmux.conf
+#
+# Why a directory symlink for WezTerm: linking the entire wezterm/ directory
+# guarantees the modular `require 'appearance'` / `require 'keybindings'` calls
+# always resolve, in one atomic link. ~/.tmux.conf (rather than
+# ~/.config/tmux/tmux.conf) is used for compatibility with tmux older than 3.1,
+# which only reads the classic path.
+#
+# Safety:
+#   * Idempotent: re-running when links already point at the right targets is a
+#     no-op.
+#   * Never overwrites regular files, directories, or unrelated symlinks. It
+#     prints a clear remediation message and leaves your data untouched.
+#
+# POSIX sh; no bashisms. Works on macOS, Linux, and WSL.
+
+set -eu
+
+# ---------------------------------------------------------------------------
+# Paths -- derived from THIS script's location, never hard-coded.
+# ---------------------------------------------------------------------------
+# Resolve the directory containing this script, following one level of symlink
+# if the script itself was invoked via a symlink. We avoid `readlink -f`
+# (missing on stock macOS) and use a portable cd/pwd approach.
+script_path=$0
+# If invoked through a symlink, resolve it (single level is sufficient here).
+while [ -h "$script_path" ]; do
+  link_target=$(readlink "$script_path")
+  case $link_target in
+    /*) script_path=$link_target ;;
+    *) script_path=$(dirname "$script_path")/$link_target ;;
+  esac
+done
+SCRIPT_DIR=$(cd "$(dirname "$script_path")" && pwd)
+
+# The repo's dotfiles source directories.
+WEZTERM_SRC="$SCRIPT_DIR/wezterm"
+TMUX_SRC="$SCRIPT_DIR/tmux/tmux.conf"
+
+# Destinations.
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+WEZTERM_DEST="$XDG_CONFIG_HOME/wezterm"
+TMUX_DEST="$HOME/.tmux.conf"
+
+# ---------------------------------------------------------------------------
+# Options
+# ---------------------------------------------------------------------------
+DRY_RUN=0
+UNINSTALL=0
+
+usage() {
+  cat <<EOF
+Usage: install.sh [--dry-run] [--uninstall] [-h|--help]
+
+  (no options)  Create the symlinks described above.
+  --dry-run     Print what would happen; make no changes.
+  --uninstall   Remove ONLY the symlinks this installer created (links that
+                point back into this repo). Leaves anything else alone.
+  -h, --help    Show this help.
+EOF
+}
+
+for arg in "$@"; do
+  case $arg in
+    --dry-run) DRY_RUN=1 ;;
+    --uninstall) UNINSTALL=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'error: unknown option: %s\n\n' "$arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+info() { printf '  %s\n' "$1"; }
+ok() { printf 'OK    %s\n' "$1"; }
+warn() { printf 'WARN  %s\n' "$1" >&2; }
+skip() { printf 'SKIP  %s\n' "$1"; }
+act() { printf 'DO    %s\n' "$1"; }
+
+# ---------------------------------------------------------------------------
+# Platform detection (for dependency suggestions)
+# ---------------------------------------------------------------------------
+# Returns one of: macos, wsl, linux, other
+detect_platform() {
+  uname_s=$(uname -s 2>/dev/null || echo unknown)
+  case $uname_s in
+    Darwin) echo macos ;;
+    Linux)
+      if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo wsl
+      else
+        echo linux
+      fi
+      ;;
+    *) echo other ;;
+  esac
+}
+PLATFORM=$(detect_platform)
+
+# ---------------------------------------------------------------------------
+# Linking core
+# ---------------------------------------------------------------------------
+# link_one <source> <dest>
+# Creates a symlink dest -> source with full collision safety and idempotency.
+link_one() {
+  src=$1
+  dest=$2
+
+  if [ ! -e "$src" ]; then
+    warn "source missing, cannot link: $src"
+    return 1
+  fi
+
+  # Already a symlink?
+  if [ -h "$dest" ]; then
+    current=$(readlink "$dest")
+    # Normalize the current target to an absolute path for comparison.
+    case $current in
+      /*) current_abs=$current ;;
+      *) current_abs=$(cd "$(dirname "$dest")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current") ;;
+    esac
+    if [ "$current_abs" = "$src" ] || [ "$current" = "$src" ]; then
+      skip "$dest already links to $src"
+      return 0
+    fi
+    warn "$dest is a symlink to '$current' (not our target)."
+    warn "  remediation: inspect it, then remove with: rm '$dest'  and re-run."
+    return 1
+  fi
+
+  # A regular file or directory occupies the destination.
+  if [ -e "$dest" ]; then
+    if [ -d "$dest" ]; then
+      warn "$dest is an existing directory; refusing to replace it."
+    else
+      warn "$dest is an existing file; refusing to overwrite it."
+    fi
+    warn "  remediation: back it up and remove it yourself, then re-run:"
+    warn "    mv '$dest' '$dest.bak' && sh install.sh"
+    return 1
+  fi
+
+  # Clear to create. Ensure the parent directory exists.
+  parent=$(dirname "$dest")
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ ! -d "$parent" ]; then
+      act "mkdir -p $parent"
+    fi
+    act "ln -s $src $dest"
+    return 0
+  fi
+
+  [ -d "$parent" ] || mkdir -p "$parent"
+  ln -s "$src" "$dest"
+  ok "linked $dest -> $src"
+}
+
+# unlink_one <source> <dest>
+# Removes dest ONLY if it is a symlink pointing at source. Never deletes files.
+unlink_one() {
+  src=$1
+  dest=$2
+
+  if [ ! -h "$dest" ]; then
+    if [ -e "$dest" ]; then
+      skip "$dest is not our symlink; leaving it untouched."
+    else
+      skip "$dest does not exist."
+    fi
+    return 0
+  fi
+
+  current=$(readlink "$dest")
+  case $current in
+    /*) current_abs=$current ;;
+    *) current_abs=$(cd "$(dirname "$dest")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current") ;;
+  esac
+  if [ "$current_abs" = "$src" ] || [ "$current" = "$src" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      act "rm $dest  (symlink -> $src)"
+    else
+      rm "$dest"
+      ok "removed symlink $dest"
+    fi
+  else
+    skip "$dest is a symlink to '$current' (not ours); leaving it untouched."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Dependency checks (advisory only -- never blocks or mutates anything)
+# ---------------------------------------------------------------------------
+suggest_install() {
+  what=$1
+  case $what in
+    wezterm)
+      case $PLATFORM in
+        macos) info "install with: brew install --cask wezterm" ;;
+        linux | wsl) info "see https://wezterm.org/install/linux.html for your distro" ;;
+        *) info "see https://wezterm.org/installation.html" ;;
+      esac
+      ;;
+    tmux)
+      case $PLATFORM in
+        macos) info "install with: brew install tmux" ;;
+        linux | wsl) info "install with your package manager, e.g. 'sudo apt install tmux' or 'sudo dnf install tmux'" ;;
+        *) info "install tmux via your package manager" ;;
+      esac
+      ;;
+    font)
+      case $PLATFORM in
+        macos) info "install with: brew install --cask font-hack-nerd-font" ;;
+        linux | wsl) info "download from https://www.nerdfonts.com/font-downloads (package names vary by distro)" ;;
+        *) info "download from https://www.nerdfonts.com/font-downloads" ;;
+      esac
+      ;;
+  esac
+}
+
+check_deps() {
+  printf '\nDependency check (advisory):\n'
+
+  if command -v wezterm >/dev/null 2>&1; then
+    ok "wezterm found: $(wezterm --version 2>/dev/null || echo present)"
+  else
+    warn "wezterm not found on PATH."
+    suggest_install wezterm
+  fi
+
+  if command -v tmux >/dev/null 2>&1; then
+    ok "tmux found: $(tmux -V 2>/dev/null || echo present)"
+  else
+    warn "tmux not found on PATH."
+    suggest_install tmux
+  fi
+
+  # Font detection is best-effort and platform dependent. We only run a check
+  # we can trust; where we cannot, we say so rather than guess.
+  if command -v wezterm >/dev/null 2>&1; then
+    if wezterm ls-fonts --list-system 2>/dev/null | grep -qi "Hack Nerd Font"; then
+      ok "Hack Nerd Font detected (via wezterm ls-fonts)."
+    else
+      warn "Hack Nerd Font not detected by 'wezterm ls-fonts'."
+      warn "  The config still requests it; WezTerm falls back to a system font if absent."
+      suggest_install font
+    fi
+  elif [ "$PLATFORM" = macos ] && command -v fc-list >/dev/null 2>&1; then
+    if fc-list 2>/dev/null | grep -qi "Hack Nerd Font"; then
+      ok "Hack Nerd Font detected (via fc-list)."
+    else
+      warn "Hack Nerd Font not detected (via fc-list)."
+      suggest_install font
+    fi
+  elif command -v fc-list >/dev/null 2>&1; then
+    if fc-list 2>/dev/null | grep -qi "Hack Nerd Font"; then
+      ok "Hack Nerd Font detected (via fc-list)."
+    else
+      warn "Hack Nerd Font not detected (via fc-list)."
+      suggest_install font
+    fi
+  else
+    warn "Cannot reliably check for Hack Nerd Font on this platform (no wezterm/fc-list)."
+    info "If glyphs render as boxes, install Hack Nerd Font manually."
+    suggest_install font
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '(dry run -- no changes will be made)\n'
+  fi
+
+  if [ "$UNINSTALL" -eq 1 ]; then
+    printf 'Uninstalling dotfile symlinks:\n'
+    rc=0
+    unlink_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
+    unlink_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+    exit "$rc"
+  fi
+
+  printf 'Installing dotfile symlinks:\n'
+  info "repo dotfiles dir: $SCRIPT_DIR"
+  rc=0
+  link_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
+  link_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+
+  check_deps
+
+  if [ "$rc" -ne 0 ]; then
+    printf '\nFinished with warnings. See messages above for remediation.\n' >&2
+  else
+    printf '\nDone.\n'
+  fi
+  exit "$rc"
+}
+
+main
