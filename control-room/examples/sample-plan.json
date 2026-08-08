@@ -1,0 +1,41 @@
+{
+  "protocol_version": 1,
+  "session_id": "REPLACE_WITH_SESSION_ID",
+  "revision": 1,
+  "goal": "Wire the Control Room usable loop",
+  "summary": "A thin vertical slice: publish a plan, review it in the browser, approve exact actions, then claim the durable approval.",
+  "workspace": {
+    "id": "ws-devtools",
+    "display_name": "devtools"
+  },
+  "blocks": [
+    {
+      "id": "architecture",
+      "kind": "markdown",
+      "content": "The broker separates review from execution. The GUI can decide but cannot run commands."
+    },
+    {
+      "id": "notes",
+      "kind": "markdown",
+      "content": "Plan content is rendered as escaped plaintext; agent HTML is never executed."
+    }
+  ],
+  "actions": [
+    {
+      "id": "action-1",
+      "kind": "write_patch",
+      "title": "Add event-store schema",
+      "targets": ["workspace://migrations"],
+      "risk": "workspace_write"
+    },
+    {
+      "id": "action-2",
+      "kind": "run_command",
+      "title": "Run the test suite",
+      "program": "go",
+      "args": ["test", "./..."],
+      "cwd": "workspace://root",
+      "risk": "local_process"
+    }
+  ]
+}

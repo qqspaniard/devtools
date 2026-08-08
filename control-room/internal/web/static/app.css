@@ -1,0 +1,24 @@
+:root { color-scheme: light dark; }
+body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 2rem; line-height: 1.5; }
+main { max-width: 52rem; margin: 0 auto; }
+h1 { font-size: 1.5rem; }
+section { margin: 1.5rem 0; }
+.meta p { margin: 0.2rem 0; }
+.block { border: 1px solid #8884; border-radius: 6px; margin: 0.75rem 0; }
+.block-head { padding: 0.4rem 0.6rem; background: #8881; font-weight: 600; }
+.block-content { margin: 0; padding: 0.6rem; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+.kind, .risk { color: #888; font-weight: 400; font-size: 0.85em; }
+.actions { list-style: none; padding: 0; }
+.actions li { padding: 0.3rem 0; }
+.reason-field { margin: 1rem 0; }
+.reason-field textarea { width: 100%; box-sizing: border-box; }
+.controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.controls button { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #8886; cursor: pointer; }
+.approve { background: #2e7d32; color: #fff; }
+.reject { background: #c62828; color: #fff; }
+.request { background: #f9a825; color: #000; }
+.status { min-height: 1.2em; font-weight: 600; }
+.timeline ol { font-size: 0.9em; }
+.timeline .ts { color: #888; }
+.decision { border: 1px solid #2e7d32; border-radius: 6px; padding: 0.75rem 1rem; }
+.hint { color: #888; font-size: 0.9em; }

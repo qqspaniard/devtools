@@ -164,12 +164,17 @@ type ApprovalRequest struct {
 // it to an exact plan revision and selection; the agent references Digest when
 // claiming.
 type Approval struct {
-	SessionID      string    `json:"session_id"`
-	PlanRevision   int       `json:"plan_revision"`
-	Digest         string    `json:"digest"`
-	AllowedActions []string  `json:"allowed_action_ids"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	MaxClaims      int       `json:"max_claims"`
+	SessionID      string   `json:"session_id"`
+	PlanRevision   int      `json:"plan_revision"`
+	Digest         string   `json:"digest"`
+	AllowedActions []string `json:"allowed_action_ids"`
+	// PermissionEnvelope is the deterministic, sorted set of risk classes
+	// spanned by the selected actions. It is bound into the digest and exposed
+	// here so the store can persist it for audit; it is derived, not
+	// independently trusted.
+	PermissionEnvelope []string  `json:"permission_envelope"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	MaxClaims          int       `json:"max_claims"`
 }
 
 // BuildApproval validates the request against the plan and produces an Approval
@@ -258,12 +263,13 @@ func BuildApproval(req ApprovalRequest) (*Approval, error) {
 	}
 
 	return &Approval{
-		SessionID:      req.Plan.SessionID,
-		PlanRevision:   req.Plan.Revision,
-		Digest:         digest,
-		AllowedActions: allowed,
-		ExpiresAt:      req.ExpiresAt.UTC(),
-		MaxClaims:      req.MaxClaims,
+		SessionID:          req.Plan.SessionID,
+		PlanRevision:       req.Plan.Revision,
+		Digest:             digest,
+		AllowedActions:     allowed,
+		PermissionEnvelope: envelope,
+		ExpiresAt:          req.ExpiresAt.UTC(),
+		MaxClaims:          req.MaxClaims,
 	}, nil
 }
 
