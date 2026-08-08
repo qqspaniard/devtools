@@ -438,6 +438,59 @@ check_zsh() {
 }
 
 # ---------------------------------------------------------------------------
+# Neovim LSP server checks (advisory only).
+# ---------------------------------------------------------------------------
+# The Neovim config (dotfiles/nvim) uses the native 0.11 LSP client: each
+# server in lsp/<name>.lua is enabled via vim.lsp.enable(), and the server
+# BINARY must be on your $PATH. There is no plugin manager and no Mason to
+# auto-install them, so this advisory check names what's missing and how to get
+# it. Like every other check here it NEVER installs or mutates anything.
+#
+# check_lsp_server <binary> <macos-hint> <generic-hint>
+check_lsp_server() {
+  bin=$1
+  macos_hint=$2
+  generic_hint=$3
+  if command -v "$bin" >/dev/null 2>&1; then
+    ok "$bin found."
+  else
+    warn "$bin not found on PATH."
+    case $PLATFORM in
+      macos) info "$macos_hint" ;;
+      *) info "$generic_hint" ;;
+    esac
+  fi
+}
+
+check_lsp_servers() {
+  printf '\nNeovim LSP servers (advisory):\n'
+  check_lsp_server lua-language-server \
+    "install with: brew install lua-language-server" \
+    "install lua-language-server via your package manager, or see https://luals.github.io/#install"
+  check_lsp_server pyright-langserver \
+    "install with: brew install pyright  (or: npm i -g pyright)" \
+    "install with: npm i -g pyright"
+  check_lsp_server bash-language-server \
+    "install with: npm i -g bash-language-server" \
+    "install with: npm i -g bash-language-server"
+  check_lsp_server yaml-language-server \
+    "install with: npm i -g yaml-language-server" \
+    "install with: npm i -g yaml-language-server"
+  check_lsp_server terraform-ls \
+    "install with: brew install terraform-ls" \
+    "see https://github.com/hashicorp/terraform-ls/releases (or your package manager)"
+  check_lsp_server rust-analyzer \
+    "install with: brew install rust-analyzer" \
+    "install with: rustup component add rust-analyzer"
+  check_lsp_server gopls \
+    "install with: go install golang.org/x/tools/gopls@latest" \
+    "install with: go install golang.org/x/tools/gopls@latest"
+  check_lsp_server typescript-language-server \
+    "install with: npm i -g typescript-language-server typescript" \
+    "install with: npm i -g typescript-language-server typescript"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -472,6 +525,7 @@ main() {
   # Dependency checks are advisory. Never let a future probe that returns
   # non-zero abort an otherwise successful install under `set -e`.
   check_deps || true
+  check_lsp_servers || true
 
   if [ "$rc" -ne 0 ]; then
     printf '\nFinished with warnings. See messages above for remediation.\n' >&2
