@@ -1,5 +1,14 @@
 -- lsp
-vim.lsp.enable({ "lua_ls", "tsgo" })
+vim.lsp.enable({
+	"lua_ls",
+	"pyright",
+	"bashls",
+	"yamlls",
+	"terraformls",
+	"rust_analyzer",
+	"gopls",
+	"ts_ls",
+})
 vim.diagnostic.config({ virtual_text = true })
 
 vim.api.nvim_create_autocmd("LspAttach", {
