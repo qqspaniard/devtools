@@ -3,16 +3,27 @@
 #
 # What it does:
 #   * Symlinks ~/.config/wezterm  -> <repo>/dotfiles/wezterm   (whole directory)
-#   * Symlinks ~/.tmux.conf       -> <repo>/dotfiles/tmux/tmux.conf
+#   * Symlinks ~/.config/tmux     -> <repo>/dotfiles/tmux      (whole directory)
+#   * Symlinks ~/.tmux.conf       -> ~/.config/tmux/tmux.conf  (compat shim)
 #   * Symlinks ~/.config/zsh      -> <repo>/dotfiles/zsh       (whole directory)
 #   * Symlinks ~/.config/nvim     -> <repo>/dotfiles/nvim      (whole directory)
+#   * Symlinks the tmux agent-status opencode plugin into
+#       ~/.config/opencode/plugins/  (see "opencode plugin" note below)
 #
 # Why a directory symlink for WezTerm and Neovim: linking the entire directory
 # guarantees the modular `require`d fragments (wezterm's appearance/keybindings,
-# nvim's lua/ and lsp/ modules) always resolve, in one atomic link. ~/.tmux.conf
-# (rather than
-# ~/.config/tmux/tmux.conf) is used for compatibility with tmux older than 3.1,
-# which only reads the classic path.
+# nvim's lua/ and lsp/ modules) always resolve, in one atomic link. The tmux
+# directory is linked whole for the same reason: tmux.conf sources sibling
+# scripts/ and themes/ (the agent-status feature), which only resolve if the
+# whole tmux/ dir is present at a stable path. ~/.tmux.conf is kept as a thin
+# symlink INTO that linked dir so tmux older than 3.1 (which only reads the
+# classic ~/.tmux.conf path) still works.
+#
+# opencode plugin: the agent-status feature has an opencode-side half
+# (tmux/plugins/tmux-agent-state.ts) that must live in ~/.config/opencode/
+# plugins/ to be loaded. It is co-located with the tmux feature it belongs to
+# and symlinked into place here. tmux.conf exports TMUX_AGENT_SCRIPT_DIR so the
+# plugin and tmux both find the shared scripts/ dir.
 #
 # The zsh directory is linked whole (same rationale as wezterm) so future
 # fragments alongside interactive.zsh resolve in one atomic link. This installer
@@ -49,16 +60,24 @@ SCRIPT_DIR=$(cd "$(dirname "$script_path")" && pwd)
 
 # The repo's dotfiles source directories.
 WEZTERM_SRC="$SCRIPT_DIR/wezterm"
-TMUX_SRC="$SCRIPT_DIR/tmux/tmux.conf"
+TMUX_DIR_SRC="$SCRIPT_DIR/tmux"
 ZSH_SRC="$SCRIPT_DIR/zsh"
 NVIM_SRC="$SCRIPT_DIR/nvim"
+OC_PLUGIN_SRC="$SCRIPT_DIR/tmux/plugins/tmux-agent-state.ts"
 
 # Destinations.
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 WEZTERM_DEST="$XDG_CONFIG_HOME/wezterm"
-TMUX_DEST="$HOME/.tmux.conf"
+TMUX_DIR_DEST="$XDG_CONFIG_HOME/tmux"
+TMUX_CONF_DEST="$HOME/.tmux.conf"
 ZSH_DEST="$XDG_CONFIG_HOME/zsh"
 NVIM_DEST="$XDG_CONFIG_HOME/nvim"
+OC_PLUGIN_DEST="$XDG_CONFIG_HOME/opencode/plugins/tmux-agent-state.ts"
+# ~/.tmux.conf is a compat shim for tmux < 3.1 (which only reads the classic
+# path). It points straight at the repo's tmux.conf. Modern tmux reads the same
+# file via the ~/.config/tmux dir link, which also makes sibling scripts/ and
+# themes/ resolve. The two links are independent by design.
+TMUX_CONF_SRC="$TMUX_DIR_SRC/tmux.conf"
 
 # ---------------------------------------------------------------------------
 # Options
@@ -430,7 +449,9 @@ main() {
     printf 'Uninstalling dotfile symlinks:\n'
     rc=0
     unlink_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
-    unlink_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+    unlink_one "$TMUX_CONF_SRC" "$TMUX_CONF_DEST" || rc=1
+    unlink_one "$TMUX_DIR_SRC" "$TMUX_DIR_DEST" || rc=1
+    unlink_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
     unlink_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
     unlink_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
     exit "$rc"
@@ -440,7 +461,11 @@ main() {
   info "repo dotfiles dir: $SCRIPT_DIR"
   rc=0
   link_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
-  link_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
+  # Whole tmux dir (so sibling scripts/ + themes/ resolve) plus the ~/.tmux.conf
+  # compat shim pointing straight at the repo file. Independent links.
+  link_one "$TMUX_DIR_SRC" "$TMUX_DIR_DEST" || rc=1
+  link_one "$TMUX_CONF_SRC" "$TMUX_CONF_DEST" || rc=1
+  link_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
   link_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
   link_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
 
