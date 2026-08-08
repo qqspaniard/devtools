@@ -5,10 +5,12 @@
 #   * Symlinks ~/.config/wezterm  -> <repo>/dotfiles/wezterm   (whole directory)
 #   * Symlinks ~/.tmux.conf       -> <repo>/dotfiles/tmux/tmux.conf
 #   * Symlinks ~/.config/zsh      -> <repo>/dotfiles/zsh       (whole directory)
+#   * Symlinks ~/.config/nvim     -> <repo>/dotfiles/nvim      (whole directory)
 #
-# Why a directory symlink for WezTerm: linking the entire wezterm/ directory
-# guarantees the modular `require 'appearance'` / `require 'keybindings'` calls
-# always resolve, in one atomic link. ~/.tmux.conf (rather than
+# Why a directory symlink for WezTerm and Neovim: linking the entire directory
+# guarantees the modular `require`d fragments (wezterm's appearance/keybindings,
+# nvim's lua/ and lsp/ modules) always resolve, in one atomic link. ~/.tmux.conf
+# (rather than
 # ~/.config/tmux/tmux.conf) is used for compatibility with tmux older than 3.1,
 # which only reads the classic path.
 #
@@ -49,12 +51,14 @@ SCRIPT_DIR=$(cd "$(dirname "$script_path")" && pwd)
 WEZTERM_SRC="$SCRIPT_DIR/wezterm"
 TMUX_SRC="$SCRIPT_DIR/tmux/tmux.conf"
 ZSH_SRC="$SCRIPT_DIR/zsh"
+NVIM_SRC="$SCRIPT_DIR/nvim"
 
 # Destinations.
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 WEZTERM_DEST="$XDG_CONFIG_HOME/wezterm"
 TMUX_DEST="$HOME/.tmux.conf"
 ZSH_DEST="$XDG_CONFIG_HOME/zsh"
+NVIM_DEST="$XDG_CONFIG_HOME/nvim"
 
 # ---------------------------------------------------------------------------
 # Options
@@ -428,6 +432,7 @@ main() {
     unlink_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
     unlink_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
     unlink_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
+    unlink_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
     exit "$rc"
   fi
 
@@ -437,6 +442,7 @@ main() {
   link_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
   link_one "$TMUX_SRC" "$TMUX_DEST" || rc=1
   link_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
+  link_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
 
   # Dependency checks are advisory. Never let a future probe that returns
   # non-zero abort an otherwise successful install under `set -e`.
