@@ -10,21 +10,31 @@ local M = {}
 -- Apply appearance settings onto an existing config table (built by
 -- wezterm.config_builder() in the entry point). Mutates and returns `config`.
 function M.apply(config)
-  -- Color scheme: use WezTerm's built-in Rose Pine Moon. No external theme
-  -- files are required, which keeps this config self-contained and portable.
-  config.color_scheme = 'rose-pine-moon'
-
-  -- The built-in rose-pine-moon scheme (verified against WezTerm
-  -- 20240203-110809-5046fc22) ships with selection_bg == background
-  -- (#232136), which makes selected text effectively invisible. Override
-  -- ONLY the selection colors with the canonical Rose Pine Moon "highlight"
-  -- overlay tone so selections are legible. Everything else is left to the
-  -- built-in scheme. If a future WezTerm fixes the built-in selection color,
-  -- this block can simply be removed.
-  config.colors = {
-    selection_fg = '#e0def4', -- rose-pine-moon text (unchanged, kept explicit)
-    selection_bg = '#44415a', -- rose-pine-moon "highlight med" overlay
-  }
+  -- Colors come from the unified theming system (dotfiles/themes/). The active
+  -- theme+mode is rendered to a plain Lua colors table at
+  -- ~/.config/themes/generated/current.wezterm.lua by render.sh, and selected
+  -- via switch-theme. We load that table and apply it as config.colors so the
+  -- terminal palette stays in lockstep with tmux and nvim.
+  --
+  -- Robustness: if the generated file is absent or fails to load (fresh
+  -- checkout before install.sh runs render.sh, or a bad edit), fall back to
+  -- WezTerm's built-in Rose Pine Moon so the terminal never fails to launch.
+  --
+  -- (Future: macOS light/dark auto-follow could be wired here via
+  -- wezterm.gui.get_appearance() poking switch-theme; kept out for now so this
+  -- stays simple and deterministic.)
+  local home = os.getenv('HOME') or ''
+  local theme_file = home .. '/.config/themes/generated/current.wezterm.lua'
+  local ok, colors = pcall(dofile, theme_file)
+  if ok and type(colors) == 'table' then
+    config.colors = colors
+  else
+    config.color_scheme = 'rose-pine-moon'
+    config.colors = {
+      selection_fg = '#e0def4',
+      selection_bg = '#44415a',
+    }
+  end
 
   -- Font. The plan standardizes on Hack Nerd Font at size 15. WezTerm will
   -- fall back to a system monospace font (and its own bundled Nerd Font
