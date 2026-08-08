@@ -7,6 +7,9 @@
 #   * Symlinks ~/.tmux.conf       -> ~/.config/tmux/tmux.conf  (compat shim)
 #   * Symlinks ~/.config/zsh      -> <repo>/dotfiles/zsh       (whole directory)
 #   * Symlinks ~/.config/nvim     -> <repo>/dotfiles/nvim      (whole directory)
+#   * Symlinks ~/.config/themes   -> <repo>/dotfiles/themes    (whole directory)
+#   * Runs the theme generator (render.sh) so the active theme's generated
+#       color adapters exist for wezterm/tmux/nvim to source (needs jq).
 #   * Symlinks the tmux agent-status opencode plugin into
 #       ~/.config/opencode/plugins/  (see "opencode plugin" note below)
 #
@@ -63,6 +66,7 @@ WEZTERM_SRC="$SCRIPT_DIR/wezterm"
 TMUX_DIR_SRC="$SCRIPT_DIR/tmux"
 ZSH_SRC="$SCRIPT_DIR/zsh"
 NVIM_SRC="$SCRIPT_DIR/nvim"
+THEMES_SRC="$SCRIPT_DIR/themes"
 OC_PLUGIN_SRC="$SCRIPT_DIR/tmux/plugins/tmux-agent-state.ts"
 
 # Destinations.
@@ -72,6 +76,7 @@ TMUX_DIR_DEST="$XDG_CONFIG_HOME/tmux"
 TMUX_CONF_DEST="$HOME/.tmux.conf"
 ZSH_DEST="$XDG_CONFIG_HOME/zsh"
 NVIM_DEST="$XDG_CONFIG_HOME/nvim"
+THEMES_DEST="$XDG_CONFIG_HOME/themes"
 OC_PLUGIN_DEST="$XDG_CONFIG_HOME/opencode/plugins/tmux-agent-state.ts"
 # ~/.tmux.conf is a compat shim for tmux < 3.1 (which only reads the classic
 # path). It points straight at the repo's tmux.conf. Modern tmux reads the same
@@ -252,6 +257,13 @@ suggest_install() {
         *) info "install tmux via your package manager" ;;
       esac
       ;;
+    jq)
+      case $PLATFORM in
+        macos) info "install with: brew install jq" ;;
+        linux | wsl) info "install with your package manager, e.g. 'sudo apt install jq' or 'sudo dnf install jq'" ;;
+        *) info "install jq via your package manager (https://jqlang.github.io/jq/)" ;;
+      esac
+      ;;
     font)
       case $PLATFORM in
         macos) info "install with: brew install --cask font-hack-nerd-font" ;;
@@ -299,6 +311,15 @@ check_deps() {
   else
     warn "tmux not found on PATH."
     suggest_install tmux
+  fi
+
+  # jq drives the theme generator (render.sh). Without it, the generated color
+  # adapters can't be produced and wezterm/tmux/nvim fall back to built-ins.
+  if command -v jq >/dev/null 2>&1; then
+    ok "jq found: $(jq --version 2>/dev/null || echo present)"
+  else
+    warn "jq not found on PATH (required to generate themes via render.sh)."
+    suggest_install jq
   fi
 
   # Font detection is best-effort and platform dependent. We only run a check
@@ -507,6 +528,7 @@ main() {
     unlink_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
     unlink_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
     unlink_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
+    unlink_one "$THEMES_SRC" "$THEMES_DEST" || rc=1
     exit "$rc"
   fi
 
@@ -521,6 +543,23 @@ main() {
   link_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
   link_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
   link_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
+  link_one "$THEMES_SRC" "$THEMES_DEST" || rc=1
+
+  # Render the active theme's color adapters so wezterm/tmux/nvim have
+  # something to source. Advisory + non-fatal: requires jq, and a failure here
+  # must never abort an otherwise-successful symlink install under `set -e`.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    act "run render.sh --all (generate theme color adapters)"
+  elif command -v jq >/dev/null 2>&1; then
+    if (cd "$THEMES_SRC" && sh render.sh --all >/dev/null 2>&1); then
+      ok "rendered theme adapters (active: $(cat "$THEMES_SRC/active" 2>/dev/null || echo '?'))"
+    else
+      warn "render.sh failed; themes will use built-in fallbacks until it succeeds."
+    fi
+  else
+    warn "jq not found; skipping theme render. wezterm/tmux/nvim use built-in fallbacks."
+    info "install jq, then run: sh $THEMES_SRC/render.sh --all"
+  fi
 
   # Dependency checks are advisory. Never let a future probe that returns
   # non-zero abort an otherwise successful install under `set -e`.

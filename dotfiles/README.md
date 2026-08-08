@@ -40,18 +40,64 @@ dotfiles/
 │   └── keybindings.lua  # intentionally minimal (keeps Ctrl-Space free)
 ├── tmux/
 │   └── tmux.conf        # prefix, splits, navigation, clipboard, status bar
+├── nvim/                # portable Neovim config (options, lsp, statusline, …)
+├── themes/              # unified color themes (see "Themes" below)
+│   ├── palettes/       # <theme>.json — the source of truth (light + dark)
+│   ├── render.sh       # generates per-tool color adapters from a palette
+│   ├── switch-theme    # selects the active theme+mode; reloads tmux
+│   └── generated/      # build output (git-ignored); sourced by the tools
 └── zsh/
     └── interactive.zsh  # optional: completion + fzf + autosuggestions +
                          # syntax-highlighting (you add one source line)
 ```
 
-## Prerequisites
+## Themes
+
+WezTerm, tmux, and Neovim share one color palette so a single switch restyles
+every surface at once. Two themes ship, each with a **light** and **dark**
+mode:
+
+| Theme | Look |
+|-------|------|
+| `nebula` | deep-space blue-violet with nebula-cyan / plasma-violet accents |
+| `rosepine` | Rose Pine (Moon dark / Dawn light) — the prior default, preserved |
+
+### Switching
+
+```sh
+~/.config/themes/switch-theme <theme> [dark|light]   # e.g. nebula dark
+```
+
+This writes `~/.config/themes/active`, refreshes the generated adapters, and
+reloads tmux immediately. WezTerm and Neovim pick up the change on their next
+config reload / new window (or buffer). The committed default is
+`nebula dark`.
+
+### How it works
+
+The **palette** (`themes/palettes/<theme>.json`) is the single source of truth:
+semantic roles (bg, fg, accent, …) plus a 16-color ANSI set and agent-state
+colors, defined for both modes. `render.sh` transpiles a palette into
+per-tool color adapters under `themes/generated/` (git-ignored build output):
+
+- `*.wezterm.lua` — applied as `config.colors`
+- `*.tmux.conf` — the status-bar styling, sourced by `tmux.conf`
+- `*.nvim.lua` — highlight groups (nvim runs with `termguicolors`)
+
+`switch-theme` keeps stable `current.*` copies of the active selection, which
+each tool sources — so the tool configs need no shell expansion. Edit a palette,
+re-run `render.sh <theme>` (or `--all`), and every tool updates together. If the
+generated files are missing (fresh checkout before `install.sh` runs
+`render.sh`), each tool falls back to a sane built-in so nothing breaks.
+
+
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
 | WezTerm | terminal emulator | required to use the WezTerm config |
 | tmux | multiplexer | 3.0+ recommended; the config is written to work on older versions too |
 | Hack Nerd Font | font | optional but recommended; WezTerm falls back to a system font if absent |
+| jq | JSON processor | required to (re)generate themes via `render.sh`; without it the tools use built-in color fallbacks |
 | zsh | shell | required only for the optional `zsh/interactive.zsh` fragment |
 | fzf | fuzzy finder | optional; needs `fzf --zsh` support (fzf ≥ 0.48) for the fragment's key-bindings |
 | zsh-autosuggestions | inline suggestions | optional plugin; enables suggestions + Ctrl-f accept |
