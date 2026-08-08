@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.local/schema/v1/approval.json",
+  "title": "Control Room Approval (v1)",
+  "description": "The durable, broker-issued approval capability. The broker computes the digest (RFC 8785 / JCS canonicalization of the bound fields, then SHA-256); the agent references digest when claiming. Kept in lockstep with internal/policy/approval.go and checked by internal/protocol/schema_test.go.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "plan_revision",
+    "digest",
+    "allowed_action_ids",
+    "expires_at",
+    "max_claims"
+  ],
+  "properties": {
+    "session_id": {
+      "description": "Session the approval belongs to.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:/-]+$"
+    },
+    "plan_revision": {
+      "description": "Exact plan revision the approval is bound to. A stale revision cannot receive a new approval or claim.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "digest": {
+      "description": "Prefixed SHA-256 digest binding protocol version, session ID, canonical plan revision, canonical selected actions, workspace identity, permission envelope, expiration, and max claims.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "allowed_action_ids": {
+      "description": "The selected action IDs this approval covers, in the reviewed order. Must be non-empty and each ID unique.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:/-]+$"
+      }
+    },
+    "expires_at": {
+      "description": "RFC 3339 expiration timestamp. Claims at or after this instant fail closed.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "max_claims": {
+      "description": "Maximum number of times this approval may be claimed. Single-use by default (1).",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1024
+    }
+  }
+}
