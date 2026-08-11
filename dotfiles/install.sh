@@ -66,6 +66,21 @@
 set -eu
 
 # ---------------------------------------------------------------------------
+# Temp-file cleanup trap
+# ---------------------------------------------------------------------------
+# The copy and uninstall loops each stage a `find` listing into a temp file
+# (they cannot use `find | while`, which would run the loop body in a subshell
+# and discard the counter mutations -- see deploy_subtree). A trailing `rm -f`
+# is not enough: the interactive `q` (quit) branch `exit`s from inside the
+# `while ... done < "$_tmplist"` loop, and a `set -e` abort mid-loop also skips
+# the trailing cleanup. So we register an EXIT/INT/TERM trap over a single
+# script-scoped temp path, reused by both loops, and initialize it empty so the
+# trap is safe under `set -u` even before any temp file is created.
+_tmplist=""
+# shellcheck disable=SC2064  # expand $_tmplist at trap-fire time, not now.
+trap 'rm -f "${_tmplist:-}"' EXIT INT TERM
+
+# ---------------------------------------------------------------------------
 # Paths -- derived from THIS script's location, never hard-coded.
 # ---------------------------------------------------------------------------
 # Resolve the directory containing this script, following one level of symlink
@@ -410,6 +425,12 @@ backup_dest() {
 }
 
 # do_copy <src> <dest>  -- mkdir -p parent, copy preserving mode. Honors DRY_RUN.
+# M2: the copy is ATOMIC. We copy to a temp file in the SAME directory as $dest,
+# then `mv` it into place. `mv` within a directory is a rename -- atomic on
+# POSIX filesystems -- so an interrupt can never leave a truncated $dest (even
+# for a NEW file, where no backup exists yet). `-p` preserves mode/timestamps
+# so executable scripts stay executable across the mv. The temp file is cleaned
+# on any failure so a partial write never lingers.
 do_copy() {
   _src=$1
   _dest=$2
@@ -418,14 +439,28 @@ do_copy() {
   fi
   _parent=$(dirname "$_dest")
   [ -d "$_parent" ] || mkdir -p "$_parent"
-  # -p preserves mode/timestamps so executable scripts stay executable.
-  cp -p "$_src" "$_dest"
+  _tmp="$_dest.tmp.$$"
+  # Copy to the sibling temp, then atomically rename. On any failure, remove the
+  # partial temp and propagate failure (return 1) rather than leave debris.
+  if cp -p "$_src" "$_tmp" && mv "$_tmp" "$_dest"; then
+    return 0
+  else
+    rm -f "$_tmp"
+    warn "failed to copy $_src -> $_dest"
+    return 1
+  fi
 }
 
 # prompt_conflict <src> <dest>
 # Prompts the user (reading from /dev/tty) how to resolve a differing file.
-# Echoes one of: overwrite | skip | quit  on stdout.
-# Re-prompts after showing a diff ("d"). Sets OVERWRITE_ALL on "a".
+# Echoes one of: overwrite | overwrite-all | skip | quit  on stdout.
+# Re-prompts after showing a diff ("d").
+#
+# NOTE (H2): this ALWAYS runs in a command-substitution subshell
+# (`_decision=$(prompt_conflict ...)`), so it must NOT try to set OVERWRITE_ALL
+# itself -- that assignment would die with the subshell. Instead the "a" answer
+# is communicated back to the caller as the `overwrite-all` token on stdout;
+# the caller (copy_one, in the main shell) sets OVERWRITE_ALL=1.
 prompt_conflict() {
   _src=$1
   _dest=$2
@@ -443,11 +478,7 @@ prompt_conflict() {
       o | O) echo overwrite; return 0 ;;
       s | S | '') echo skip; return 0 ;;
       q | Q) echo quit; return 0 ;;
-      a | A)
-        OVERWRITE_ALL=1
-        echo overwrite
-        return 0
-        ;;
+      a | A) echo overwrite-all; return 0 ;;
       d | D)
         printf '%s--- diff (%s vs %s): ---%s\n' "$C_DIM" "$_dest" "$_src" "$C_RESET" >/dev/tty
         # Unified diff, existing dest vs repo source. Never fatal under set -e.
@@ -505,9 +536,17 @@ copy_one() {
   # Exists and DIFFERS -> conflict.
   N_CONFLICT=$((N_CONFLICT + 1))
 
-  # Dry run: report the conflict, make no changes, do not prompt.
+  # Dry run: report the intended outcome, make no changes, do not prompt.
+  # M3: honor --force (or a prior all-overwrite) in the report so
+  # `--dry-run --force` says "would update", not "would prompt". This branch
+  # must precede the real force branch (which mutates); do_copy/backup_dest are
+  # already no-ops under DRY_RUN, but reporting here keeps dry-run prompt-free.
   if [ "$DRY_RUN" -eq 1 ]; then
-    report_conflict "$dest differs (would prompt)"
+    if [ "$FORCE" -eq 1 ] || [ "$OVERWRITE_ALL" -eq 1 ]; then
+      report_update "$dest (would update)"
+    else
+      report_conflict "$dest differs (would prompt)"
+    fi
     return 0
   fi
 
@@ -526,6 +565,16 @@ copy_one() {
     report_conflict "$dest differs"
     _decision=$(prompt_conflict "$src" "$dest")
     case $_decision in
+      overwrite-all)
+        # H2: persist "all-overwrite" in THIS (main) shell so every subsequent
+        # conflict is auto-overwritten without re-prompting. Then fall through
+        # to the same backup+copy as a one-off overwrite.
+        OVERWRITE_ALL=1
+        backup_dest "$dest"
+        do_copy "$src" "$dest"
+        report_update "$dest"
+        N_UPDATE=$((N_UPDATE + 1))
+        ;;
       overwrite)
         backup_dest "$dest"
         do_copy "$src" "$dest"
@@ -588,6 +637,7 @@ deploy_subtree() {
   done <"$_tmplist"
 
   rm -f "$_tmplist"
+  _tmplist=""
 }
 
 # deploy_entry <src> <dest>  -- dispatch a manifest entry: subtree if src is a
@@ -684,6 +734,7 @@ uninstall_subtree() {
   done <"$_tmplist"
 
   rm -f "$_tmplist"
+  _tmplist=""
 }
 
 uninstall_entry() {
