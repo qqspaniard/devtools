@@ -34,10 +34,13 @@ _theme="${TMUX_AGENT_THEME_DIR:-${_here}/../themes/spaceflight}"
 # Max glyphs to show (one per agent). Beyond this, show first N then a "+".
 GLYPH_CAP="${TMUX_AGENT_GLYPH_CAP:-4}"
 
-# Max display width of the window name (#W), in CHARACTERS. Longer names are
-# truncated with a single-width ellipsis. Sized so ~4 window tabs fit a 148-col
-# bar at 15pt (window-list budget ~106 cols / 4 tabs - per-tab chrome ~= 20).
-NAME_MAX="${TMUX_AGENT_NAME_MAX:-20}"
+# Window-name budget. The PRIMARY cap is word-based: agent titles are steered
+# to <= 3 words at the source (opencode `title` prompt), and we enforce the same
+# here so a title that fudges the limit still gets clipped to whole words rather
+# than chopped mid-word. NAME_MAX (characters) is a SECONDARY safety net for the
+# pathological case (few but very long words) so the bar can't overflow.
+NAME_MAX_WORDS="${TMUX_AGENT_NAME_MAX_WORDS:-3}"   # primary: keep whole words
+NAME_MAX="${TMUX_AGENT_NAME_MAX:-28}"              # secondary: hard char ceiling
 
 # Staleness TTL for active states (seconds). Generous, because producers stamp
 # on transitions, not on a heartbeat -- a long agent turn must not go stale.
@@ -77,6 +80,26 @@ truncate_name() {
   fi
   ell="$(printf '\u2026')"                   # single-width ellipsis (bash printf \u)
   printf '%s%s' "${s:0:$((max - 1))}" "$ell"
+}
+
+# truncate_words <name> <maxwords> -> name clipped to at most <maxwords>
+# whitespace-delimited words. If any words were dropped, a single-width ellipsis
+# is appended (no leading space, so "a b c" -> "a b c…"). maxwords < 1 => as-is.
+# Pure bash word-splitting; multibyte-safe (operates on whole words, never cuts
+# inside a character). Internal whitespace runs collapse to single spaces, which
+# is fine for a window label.
+truncate_words() {
+  local s="$1" maxwords="$2" ell
+  local LC_ALL=en_US.UTF-8                    # so printf '\u2026' yields … (see truncate_name)
+  [ "$maxwords" -lt 1 ] 2>/dev/null && { printf '%s' "$s"; return 0; }
+  # shellcheck disable=SC2206  # deliberate word-splitting into an array
+  local -a words=($s)
+  if [ "${#words[@]}" -le "$maxwords" ]; then
+    printf '%s' "$s"
+    return 0
+  fi
+  ell="$(printf '\u2026')"
+  printf '%s%s' "${words[*]:0:$maxwords}" "$ell"
 }
 
 # --- gather this window's panes and their agent state ----------------------
@@ -164,8 +187,10 @@ else
   name="${agent_count} sessions"
 fi
 
-# Cap the name so long titles can't blow out the window bar (see NAME_MAX).
-# Applies to every naming path uniformly.
+# Cap the name so long titles can't blow out the window bar. Word cap is the
+# primary limit (whole-word clip); the char cap is a secondary safety net for
+# pathological long-word titles. Applies to every naming path uniformly.
+name="$(truncate_words "$name" "$NAME_MAX_WORDS")"
 name="$(truncate_name "$name" "$NAME_MAX")"
 
 # Write the real window name (#W = single source of truth for display), then
