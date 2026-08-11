@@ -162,10 +162,35 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# opencode: one theme JSON carrying BOTH modes. opencode accepts inline hex per
-# role and follows its own light/dark setting. We build it with jq so the hex
-# values are injected safely and the output is valid JSON. Role set mirrors what
-# opencode expects (see ~/.config/opencode/themes/matrix-ice.json).
+# opencode: one theme JSON carrying BOTH modes, built with jq so hex values are
+# injected safely and the output is valid JSON.
+#
+# LAYERED model (matches the look of opencode's built-in `system` theme, but with
+# exact palette colors): the BASE background INHERITS the terminal, while the
+# panel/element background LAYERS use palette hex, and every foreground/accent
+# role is palette hex. Reference shape (validated live in David's opencode, build
+# 1.18.16): ~/.config/opencode/themes/rosepine-layered.json.
+#
+#   background        -> "none"      (literal string; inherit the terminal bg)
+#   backgroundPanel   -> surface hex (the panel layer)
+#   backgroundElement -> overlay hex (the element layer)
+#   diffContextBg     -> "none"      (inherit, like the base)
+#   *everything else* -> palette hex (foregrounds, accents, borders, diff/md/syntax)
+# We emit a `defs` block of named palette colors (per mode) and reference them by
+# name from `theme`, mirroring the reference's cleaner approach.
+#
+# CRITICAL: opencode CRASHES on `null` and on the per-role value "system" (tested,
+# build 1.18.16). The ONLY inheritance token we emit is the string "none"; every
+# other value is a def-name resolving to hex. Never emit null or "system".
+#
+# Palette-schema gaps vs. the reference (documented choices; our schema has only
+# accent/accent2, no distinct 3rd/4th accent like rose-pine's rose/pine):
+#   * opencode `accent` role  -> palette accent2  (ref used a distinct "rose")
+#   * opencode `info` role     -> palette accent2 (ref used a distinct "pine")
+#   * markdownLinkText/ImageText (ref pine)  -> accent2
+#   * markdownStrong / syntaxNumber (ref rose) -> accent2
+# accent2 is the closest existing key in each case; kept consistent so the theme
+# reads coherently without inventing colors the palette doesn't define.
 # -----------------------------------------------------------------------------
 render_opencode() {
   pf=$1; name=$2
@@ -174,64 +199,87 @@ render_opencode() {
   jq -n --slurpfile p "$pf" '
     ($p[0].dark)  as $d |
     ($p[0].light) as $l |
-    # role r <- (dark-key, light-key) from the two mode objects.
-    def role(dk; lk): { dark: $d[dk], light: $l[lk] };
+    # def d <- named palette color, carrying both modes, keyed by palette key.
+    def d(k): { dark: $d[k], light: $l[k] };
+    # r <- a theme role pointing at a def name (same name for both modes).
+    def r($n): { dark: $n, light: $n };
     {
       "$schema": "https://opencode.ai/theme.json",
+      # Named palette colors (both modes). "none" is NOT a def -- it is emitted
+      # inline on the roles that inherit the terminal background.
+      "defs": {
+        "bg":       d("bg"),
+        "surface":  d("surface"),
+        "overlay":  d("overlay"),
+        "muted":    d("muted"),
+        "subtle":   d("subtle"),
+        "fg":       d("fg"),
+        "accent":   d("accent"),
+        "accent2":  d("accent2"),
+        "warn":     d("warn"),
+        "error":    d("error"),
+        "ok":       d("ok")
+      },
       "theme": {
-        "primary":            role("accent";  "accent"),
-        "secondary":          role("accent2"; "accent2"),
-        "accent":             role("accent2"; "accent2"),
-        "error":              role("error";   "error"),
-        "warning":            role("warn";    "warn"),
-        "success":            role("ok";      "ok"),
-        "info":               role("accent2"; "accent2"),
-        "text":               role("fg";      "fg"),
-        "textMuted":          role("muted";   "muted"),
-        "background":         role("bg";      "bg"),
-        "backgroundPanel":    role("surface"; "surface"),
-        "backgroundElement":  role("overlay"; "overlay"),
-        "border":             role("overlay"; "overlay"),
-        "borderActive":       role("accent";  "accent"),
-        "borderSubtle":       role("surface"; "surface"),
+        "primary":            r("accent"),
+        "secondary":          r("accent2"),
+        "accent":             r("accent2"),
+        "error":              r("error"),
+        "warning":            r("warn"),
+        "success":            r("ok"),
+        "info":               r("accent2"),
+        "text":               r("fg"),
+        "textMuted":          r("muted"),
 
-        "diffAdded":            role("ok";       "ok"),
-        "diffRemoved":          role("error";    "error"),
-        "diffContext":          role("muted";    "muted"),
-        "diffHunkHeader":       role("muted";    "muted"),
-        "diffHighlightAdded":   role("accent2";  "accent2"),
-        "diffHighlightRemoved": role("error";    "error"),
-        "diffAddedBg":          role("surface";  "surface"),
-        "diffRemovedBg":        role("surface";  "surface"),
-        "diffContextBg":        role("bg";       "bg"),
-        "diffLineNumber":       role("overlay";  "overlay"),
-        "diffAddedLineNumberBg":   role("surface"; "surface"),
-        "diffRemovedLineNumberBg": role("surface"; "surface"),
+        # LAYERED backgrounds: base inherits the terminal; panel/element use
+        # palette layers. "none" is a literal string (never null / "system").
+        # (No backgroundMenu: the reference theme omits it, and we keep exact
+        # role parity with rosepine-layered.json.)
+        "background":         { "dark": "none", "light": "none" },
+        "backgroundPanel":    r("surface"),
+        "backgroundElement":  r("overlay"),
 
-        "markdownText":           role("fg";      "fg"),
-        "markdownHeading":        role("accent";  "accent"),
-        "markdownLink":           role("accent2"; "accent2"),
-        "markdownLinkText":       role("accent2"; "accent2"),
-        "markdownCode":           role("ok";      "ok"),
-        "markdownBlockQuote":     role("muted";   "muted"),
-        "markdownEmph":           role("warn";    "warn"),
-        "markdownStrong":        role("accent";  "accent"),
-        "markdownHorizontalRule": role("overlay"; "overlay"),
-        "markdownListItem":       role("accent";  "accent"),
-        "markdownListEnumeration":role("accent2"; "accent2"),
-        "markdownImage":          role("accent2"; "accent2"),
-        "markdownImageText":      role("accent2"; "accent2"),
-        "markdownCodeBlock":      role("ok";      "ok"),
+        "border":             r("overlay"),
+        "borderActive":       r("accent"),
+        "borderSubtle":       r("muted"),
 
-        "syntaxComment":     role("muted";   "muted"),
-        "syntaxKeyword":     role("accent";  "accent"),
-        "syntaxFunction":    role("accent2"; "accent2"),
-        "syntaxVariable":    role("fg";      "fg"),
-        "syntaxString":      role("ok";      "ok"),
-        "syntaxNumber":      role("warn";    "warn"),
-        "syntaxType":        role("accent2"; "accent2"),
-        "syntaxOperator":    role("subtle";  "subtle"),
-        "syntaxPunctuation": role("subtle";  "subtle")
+        "diffAdded":            r("ok"),
+        "diffRemoved":          r("error"),
+        "diffContext":          r("subtle"),
+        "diffHunkHeader":       r("subtle"),
+        "diffHighlightAdded":   r("accent2"),
+        "diffHighlightRemoved": r("error"),
+        "diffAddedBg":          r("surface"),
+        "diffRemovedBg":        r("surface"),
+        "diffContextBg":        { "dark": "none", "light": "none" },
+        "diffLineNumber":       r("muted"),
+        "diffAddedLineNumberBg":   r("surface"),
+        "diffRemovedLineNumberBg": r("surface"),
+
+        "markdownText":           r("fg"),
+        "markdownHeading":        r("accent"),
+        "markdownLink":           r("accent2"),
+        "markdownLinkText":       r("accent2"),
+        "markdownCode":           r("warn"),
+        "markdownBlockQuote":     r("subtle"),
+        "markdownEmph":           r("warn"),
+        "markdownStrong":         r("accent2"),
+        "markdownHorizontalRule": r("muted"),
+        "markdownListItem":       r("accent"),
+        "markdownListEnumeration":r("accent2"),
+        "markdownImage":          r("accent2"),
+        "markdownImageText":      r("accent2"),
+        "markdownCodeBlock":      r("fg"),
+
+        "syntaxComment":     r("muted"),
+        "syntaxKeyword":     r("accent"),
+        "syntaxFunction":    r("accent2"),
+        "syntaxVariable":    r("fg"),
+        "syntaxString":      r("warn"),
+        "syntaxNumber":      r("accent2"),
+        "syntaxType":        r("accent2"),
+        "syntaxOperator":    r("subtle"),
+        "syntaxPunctuation": r("subtle")
       }
     }
   ' >"$OPENCODE_THEMES_DIR/$name.json"
@@ -242,12 +290,20 @@ render_opencode() {
 # so tmux.conf sources one of these by filename. Structure mirrors the original
 # inline block; the #{@agent_glyphs} references belong to the agent-status
 # feature and are preserved verbatim.
+#
+# Terminal-inherit philosophy (same idea as the layered opencode theme): the
+# bar's BASE background inherits the terminal via tmux's `bg=default`, so the bar
+# blends into the terminal rather than painting a hardcoded palette bg. What
+# stays palette-colored: all foreground text, and the segments meant to stand out
+# -- the session-name block (accent bg) and the active window (overlay bg). Pane
+# borders, message-style and mode-style keep palette hex; those aren't part of
+# the bar backdrop. If `bg=default` ever reads worse than a subtle offset, the
+# palette `surface` hex is the intended fallback for status-style bg.
 # -----------------------------------------------------------------------------
 render_tmux() {
   pf=$1; name=$2; mode=$3
   bg=$(g "$pf" "$mode" bg)
   fg=$(g "$pf" "$mode" fg)
-  surface=$(g "$pf" "$mode" surface)
   overlay=$(g "$pf" "$mode" overlay)
   muted=$(g "$pf" "$mode" muted)
   subtle=$(g "$pf" "$mode" subtle)
@@ -263,18 +319,23 @@ render_tmux() {
 # Status-bar styling. tmux has no native theme registry; tmux.conf sources one
 # of these by filename. Structure mirrors the original inline block; colors come
 # from the palette. #{@agent_glyphs} is the agent-status overlay and is preserved.
+#
+# The bar's BASE background inherits the terminal (bg=default) so it blends in;
+# only the standout segments (session-name accent block, active window) paint a
+# palette bg. Foreground text stays palette-colored throughout.
 
 set -g status on
 set -g status-interval 5
 set -g status-position top
 set -g status-justify left
 
-# Overall bar background/foreground.
-set -g status-style "bg=$surface,fg=$fg"
+# Overall bar background inherits the terminal (bg=default); fg is palette text.
+set -g status-style "bg=default,fg=$fg"
 
-# Left: session name on an accent background.
+# Left: session name on an accent background. The trailing separator returns to
+# the inherited terminal bg so the rest of the bar blends in.
 set -g status-left-length 40
-set -g status-left "#[bg=$accent,fg=$bg,bold] #S #[bg=$surface,fg=$accent]"
+set -g status-left "#[bg=$accent,fg=$bg,bold] #S #[bg=default,fg=$accent]"
 
 # Right: hostname then date/time, muted so it doesn't shout.
 set -g status-right-length 80
