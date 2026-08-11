@@ -48,6 +48,18 @@ function M.apply(config)
   -- tab bar avoids a second, redundant status row when running tmux.
   config.enable_tab_bar = false
 
+  -- Chromeless window: no title bar, no OS border -- just the terminal surface,
+  -- edge to edge. "RESIZE" keeps the drag-to-resize handles (grab any edge/
+  -- corner), it only removes the title bar + traffic-light buttons. To MOVE a
+  -- chromeless window, hold Ctrl+Cmd and drag its body IF the macOS setting
+  -- `defaults write -g NSWindowShouldDragOnGesture -bool true` is enabled
+  -- (opt-in, not set by this config); otherwise resize via edges and manage
+  -- window placement via Mission Control / a window manager.
+  config.window_decorations = "RESIZE"
+
+  -- Zero inner padding so content runs edge to edge (no chrome gap around it).
+  config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
+
   return config
 end
 
