@@ -34,6 +34,11 @@ _theme="${TMUX_AGENT_THEME_DIR:-${_here}/../themes/spaceflight}"
 # Max glyphs to show (one per agent). Beyond this, show first N then a "+".
 GLYPH_CAP="${TMUX_AGENT_GLYPH_CAP:-4}"
 
+# Max display width of the window name (#W), in CHARACTERS. Longer names are
+# truncated with a single-width ellipsis. Sized so ~4 window tabs fit a 148-col
+# bar at 15pt (window-list budget ~106 cols / 4 tabs - per-tab chrome ~= 20).
+NAME_MAX="${TMUX_AGENT_NAME_MAX:-20}"
+
 # Staleness TTL for active states (seconds). Generous, because producers stamp
 # on transitions, not on a heartbeat -- a long agent turn must not go stale.
 # See AGENT-STATE-CONTRACT.md.
@@ -50,6 +55,28 @@ is_agent_proc() {
   local c="$1" p
   for p in $AGENT_PROCS; do [ "$c" = "$p" ] && return 0; done
   return 1
+}
+
+# truncate_name <name> <max> -> name capped to <max> display CHARACTERS, with a
+# single-width ellipsis appended when truncated. Counts CHARACTERS, not bytes,
+# so multibyte UTF-8 titles cut cleanly.
+#
+# Implementation: pure bash. Under a UTF-8 locale, ${#s} and ${s:0:n} operate on
+# CHARACTERS, not bytes. We pin `local LC_ALL=en_US.UTF-8` so this holds even
+# when the caller's locale is C -- which is common for tmux `run-shell`, and
+# verified to work here (2026-08-08). We deliberately avoid awk: macOS's default
+# /usr/bin/awk (BSD) counts bytes even under a UTF-8 locale and cuts mid-byte.
+# Pure bash also avoids spawning a subprocess on every rename.
+truncate_name() {
+  local s="$1" max="$2" ell
+  local LC_ALL=en_US.UTF-8                   # char-aware ${#s} / ${s:0:n}
+  [ "$max" -lt 1 ] 2>/dev/null && { printf '%s' "$s"; return 0; }
+  if [ "${#s}" -le "$max" ]; then
+    printf '%s' "$s"
+    return 0
+  fi
+  ell="$(printf '\u2026')"                   # single-width ellipsis (bash printf \u)
+  printf '%s%s' "${s:0:$((max - 1))}" "$ell"
 }
 
 # --- gather this window's panes and their agent state ----------------------
@@ -136,6 +163,10 @@ else
   # 2+ agents
   name="${agent_count} sessions"
 fi
+
+# Cap the name so long titles can't blow out the window bar (see NAME_MAX).
+# Applies to every naming path uniformly.
+name="$(truncate_name "$name" "$NAME_MAX")"
 
 # Write the real window name (#W = single source of truth for display), then
 # mark it brain-authored so a later invocation knows this off-state is ours,
