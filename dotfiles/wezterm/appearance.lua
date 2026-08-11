@@ -57,8 +57,10 @@ function M.apply(config)
   -- window placement via Mission Control / a window manager.
   config.window_decorations = "RESIZE"
 
-  -- Zero inner padding so content runs edge to edge (no chrome gap around it).
-  config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
+  -- Small inner padding: enough that content isn't jammed against the glass
+  -- edge (fully chromeless + zero padding felt cramped), without the chunky
+  -- default gap. 20px all sides is a comfortable breathing margin.
+  config.window_padding = { left = 20, right = 20, top = 20, bottom = 20 }
 
   return config
 end
