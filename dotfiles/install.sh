@@ -19,7 +19,7 @@
 #   * tmux/     -> ~/.config/tmux/           (incl. scripts/, themes/spaceflight/)
 #   * nvim/     -> ~/.config/nvim/           (incl. lua/, lsp/; excludes colors/)
 #   * zsh/      -> ~/.config/zsh/
-#   * themes/   -> ~/.config/themes/         (render.sh + public palettes/)
+#   * themes/   -> ~/.config/themes/         (render.sh + public base24 schemes/)
 #   * tmux/plugins/tmux-agent-state.ts -> ~/.config/opencode/plugins/... (single)
 #   * tmux/tmux.conf                   -> ~/.tmux.conf   (compat shim, single)
 #
@@ -127,7 +127,7 @@ THEMES_SRC="$SCRIPT_DIR/themes"
 #   tmux/                                   ~/.config/tmux/                          incl. scripts/ + themes/spaceflight/ (tracked)
 #   nvim/                                   ~/.config/nvim/                          incl. lua/ + lsp/; exclude colors/
 #   zsh/                                    ~/.config/zsh/                           --
-#   themes/                                 ~/.config/themes/                        render.sh + public palettes/ (source of truth)
+#   themes/                                 ~/.config/themes/                        render.sh + public base24 schemes/ (source of truth)
 #   tmux/plugins/tmux-agent-state.ts        ~/.config/opencode/plugins/...           single file (opencode plugin)
 #   tmux/tmux.conf                          ~/.tmux.conf                             single-file compat shim for tmux < 3.1
 #
