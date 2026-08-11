@@ -52,7 +52,7 @@ dotfiles/
 
 ## Themes
 
-WezTerm, tmux, Neovim, and opencode share color palettes. The model is **native
+WezTerm, Neovim, and opencode share color palettes. The model is **native
 tool theme dirs**: `render.sh` transpiles a palette into each tool's *own*
 native theme format and drops it in that tool's *own* theme-discovery directory,
 so each tool switches themes natively — no central controller, no "active" file,
@@ -63,6 +63,10 @@ mode:
 |-------|------|
 | `nebula` | deep-space blue-violet with nebula-cyan / plasma-violet accents |
 | `rosepine` | Rose Pine (Moon dark / Dawn light) |
+
+tmux is **not** part of the palette render: its status bar is styled natively
+and inline in `tmux.conf` (it dissolves into the terminal via `bg=default`), so
+there is no generated tmux theme file.
 
 ### Generating
 
@@ -79,7 +83,6 @@ mode:
 - Neovim → `~/.config/nvim/colors/<name>-<mode>.lua` (loadable via
   `:colorscheme <name>-<mode>`)
 - opencode → `~/.config/opencode/themes/<name>.json` (one file, both modes)
-- tmux → `~/.config/tmux/themes/<name>-<mode>.conf` (status-bar styling)
 
 `install.sh` runs `render.sh --all` after copying, so the public themes exist in
 place (needs `jq`).
@@ -94,8 +97,6 @@ Each tool switches natively — no shared switcher:
   `nvim/lua/colorscheme.lua`).
 - **opencode**: set the theme in opencode's config; it follows its own
   light/dark setting from the one JSON.
-- **tmux**: change the sourced filename in `tmux.conf` (tmux has no native theme
-  registry) and reload (`prefix + r`).
 
 The committed default across the tools is `nebula-dark`.
 

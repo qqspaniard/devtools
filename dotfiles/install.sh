@@ -37,10 +37,12 @@
 #
 # After copying, the theme generator (themes/render.sh --all) runs so the PUBLIC
 # palettes (nebula, rosepine) are emitted as native theme files into each tool's
-# own theme dir (~/.config/{wezterm/colors,nvim/colors,opencode/themes,
-# tmux/themes}) for the tools to discover/source (needs jq). Local-only palettes
-# (e.g. a brand palette kept OUTSIDE this repo) are NOT rendered by the installer;
-# generate those yourself: `sh render.sh /path/to/palette.json`.
+# own theme dir (~/.config/{wezterm/colors,nvim/colors,opencode/themes}) for the
+# tools to discover/source (needs jq). tmux is NOT a render target: its status
+# bar is styled natively and inline in tmux.conf, so no tmux theme file is
+# generated. Local-only palettes (e.g. a brand palette kept OUTSIDE this repo)
+# are NOT rendered by the installer; generate those yourself:
+# `sh render.sh /path/to/palette.json`.
 #
 # The zsh directory is copied whole so future fragments alongside interactive.zsh
 # deploy automatically. This installer does NOT edit your ~/.zshrc. To activate
@@ -149,18 +151,17 @@ $SCRIPT_DIR/tmux/tmux.conf|$HOME/.tmux.conf"
 #   wezterm  -> ~/.config/wezterm/colors/<name>-<mode>.toml
 #   nvim     -> ~/.config/nvim/colors/<name>-<mode>.lua
 #   opencode -> ~/.config/opencode/themes/<name>.json
-#   tmux     -> ~/.config/tmux/themes/<name>-<mode>.conf
+#   (tmux is styled natively inline in tmux.conf -- no generated theme file)
 #
 #   */colors/*   wezterm + nvim generated color schemes. The repo sources carry
 #   colors/*     no colors/ dir, so these are purely defensive: they guarantee
 #                the installer never manages a generated scheme even if one ever
 #                appears under a source tree.
 #
-# NOTE: the generated tmux theme confs (~/.config/tmux/themes/*.conf) and the
-# generated opencode theme (~/.config/opencode/themes/*.json) live only at the
-# DEPLOY target, not in the repo source, so the installer's source-tree scan
-# never sees them -- no exclude is needed. Do NOT exclude tmux/themes/spaceflight/*
-# -- that is legit tracked config that should deploy.
+# NOTE: the generated opencode theme (~/.config/opencode/themes/*.json) lives
+# only at the DEPLOY target, not in the repo source, so the installer's
+# source-tree scan never sees it -- no exclude is needed. Do NOT exclude
+# tmux/themes/spaceflight/* -- that is legit tracked config that should deploy.
 EXCLUDES="\
 */colors/*
 colors/*"
@@ -881,7 +882,7 @@ check_deps() {
   fi
 
   # jq drives the theme generator (render.sh). Without it, the native theme
-  # files can't be produced and wezterm/tmux/nvim/opencode fall back to built-ins.
+  # files can't be produced and wezterm/nvim/opencode fall back to built-ins.
   if command -v jq >/dev/null 2>&1; then
     ok "jq found: $(jq --version 2>/dev/null || echo present)"
   else
@@ -1125,8 +1126,9 @@ main() {
 
   # Generate the PUBLIC themes (nebula, rosepine) as native theme files into
   # each tool's own theme dir (~/.config/{wezterm/colors,nvim/colors,
-  # opencode/themes,tmux/themes}) so wezterm/nvim/opencode/tmux can discover and
-  # source them. `render.sh --all` renders only the baked-in public palettes;
+  # opencode/themes}) so wezterm/nvim/opencode can discover and source them.
+  # (tmux is not rendered: its status bar is styled natively inline in
+  # tmux.conf.) `render.sh --all` renders only the baked-in public palettes;
   # local-only palettes (kept outside this repo) are intentionally NOT rendered
   # here -- generate those yourself with `sh render.sh /path/to/palette.json`.
   # render.sh honors $XDG_CONFIG_HOME (and per-tool *_DIR overrides), so we
@@ -1135,7 +1137,7 @@ main() {
   # otherwise-successful install under `set -e`.
   export XDG_CONFIG_HOME
   if [ "$DRY_RUN" -eq 1 ]; then
-    report_would "run render.sh --all (generate native theme files into ~/.config/{wezterm,nvim,opencode,tmux})"
+    report_would "run render.sh --all (generate native theme files into ~/.config/{wezterm,nvim,opencode})"
   elif command -v jq >/dev/null 2>&1; then
     if (cd "$THEMES_SRC" && sh render.sh --all >/dev/null 2>&1); then
       ok "rendered public themes (nebula, rosepine) into the tool theme dirs"
@@ -1143,7 +1145,7 @@ main() {
       warn "render.sh failed; themes will use built-in fallbacks until it succeeds."
     fi
   else
-    warn "jq not found; skipping theme render. wezterm/tmux/nvim/opencode use built-in fallbacks."
+    warn "jq not found; skipping theme render. wezterm/nvim/opencode use built-in fallbacks."
     info "install jq, then run: sh $THEMES_SRC/render.sh --all"
   fi
 
