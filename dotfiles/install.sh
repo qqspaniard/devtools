@@ -275,6 +275,102 @@ PLATFORM=$(detect_platform)
 # ---------------------------------------------------------------------------
 # Copy core
 # ---------------------------------------------------------------------------
+# Symlink safety (C1) ---------------------------------------------------------
+# This installer supersedes an OLDER one that created whole-directory symlinks
+# (e.g. ~/.config/tmux -> <repo>/dotfiles/tmux). On a machine that ran the old
+# installer those stale symlinks still exist, and they are DANGEROUS to a
+# copy/uninstall model: a $dest under such a symlink resolves THROUGH it back
+# into the repo, so cmp would compare a repo file to ITSELF ("identical") and a
+# subsequent `rm` would delete a tracked file out of the git working tree; a
+# copy would write INTO the repo. We therefore never compare/copy/remove
+# through a symlink. We refuse and instruct the user to remove the legacy
+# symlink and re-run (approach (a): refuse + instruct, never auto-migrate).
+#
+# symlink_on_path <path>  -- return 0 if <path> itself is a symlink, OR if any
+# ANCESTOR directory of it (walking up toward, but not past, the config roots
+# $XDG_CONFIG_HOME / $HOME / /) is a symlink. This catches both a symlinked
+# leaf file and the legacy whole-dir symlink case (an ancestor like
+# ~/.config/tmux being a symlink when the target is ~/.config/tmux/scripts/x).
+symlink_on_path() {
+  _p=$1
+  # Test the path itself first (leaf may be a symlinked file).
+  if [ -L "$_p" ]; then
+    return 0
+  fi
+  # Walk ancestors upward, stopping at a config root or the filesystem root.
+  _cur=$(dirname "$_p")
+  while :; do
+    case $_cur in
+      "$XDG_CONFIG_HOME" | "$HOME" | / | .) return 1 ;;
+    esac
+    if [ -L "$_cur" ]; then
+      return 0
+    fi
+    _next=$(dirname "$_cur")
+    # Guard against a stuck walk (dirname of "/" is "/").
+    [ "$_next" = "$_cur" ] && return 1
+    _cur=$_next
+  done
+}
+
+# warned-roots ledger: newline-separated list of destination roots we have
+# already emitted the legacy-symlink warning for, so we nag exactly ONCE per
+# affected root (not once per file under it).
+WARNED_SYMLINK_ROOTS=""
+
+# warn_legacy_symlink <dest>  -- find the offending symlink component on <dest>
+# (the path itself or the nearest symlinked ancestor) and print a single clear,
+# actionable migration instruction the FIRST time we see that component.
+warn_legacy_symlink() {
+  _dest=$1
+  # Identify the actual symlink component to name in the message.
+  _link=""
+  if [ -L "$_dest" ]; then
+    _link=$_dest
+  else
+    _cur=$(dirname "$_dest")
+    while :; do
+      case $_cur in
+        "$XDG_CONFIG_HOME" | "$HOME" | / | .) break ;;
+      esac
+      if [ -L "$_cur" ]; then
+        _link=$_cur
+        break
+      fi
+      _next=$(dirname "$_cur")
+      [ "$_next" = "$_cur" ] && break
+      _cur=$_next
+    done
+  fi
+  [ -n "$_link" ] || _link=$_dest
+
+  # Emit once per offending component.
+  _oldifs=$IFS
+  IFS='
+'
+  for _seen in $WARNED_SYMLINK_ROOTS; do
+    if [ "$_seen" = "$_link" ]; then
+      IFS=$_oldifs
+      return 0
+    fi
+  done
+  IFS=$_oldifs
+  WARNED_SYMLINK_ROOTS="$WARNED_SYMLINK_ROOTS
+$_link"
+
+  if [ "$UNINSTALL" -eq 1 ]; then
+    report_kept "$_link (symlink -- legacy install; skipped)"
+    N_KEPT=$((N_KEPT + 1))
+  else
+    report_skip "$_link (symlink -- legacy install; skipped)"
+    N_SKIP=$((N_SKIP + 1))
+  fi
+  warn "$_link is a symlink (legacy directory-symlink install)."
+  warn "  Refusing to read/write/remove through it (that could damage the repo)."
+  warn "  To migrate, remove the old symlink and re-run this installer:"
+  warn "      rm '$_link'"
+}
+
 # is_excluded <relpath>  -- return 0 if <relpath> matches any EXCLUDES glob.
 is_excluded() {
   _rel=$1
@@ -377,6 +473,16 @@ copy_one() {
     return 0
   fi
 
+  # Symlink guard (C1). Never copy through a symlinked dest or a dest under a
+  # legacy directory symlink -- that would write into the repo. Refuse + warn
+  # (once per offending symlink component) and skip. `[ -e ]` above follows
+  # symlinks; a dangling dest symlink reads as "not exists" and would fall into
+  # the NEW branch, so we test symlinks explicitly BEFORE the existence checks.
+  if symlink_on_path "$dest"; then
+    warn_legacy_symlink "$dest"
+    return 0
+  fi
+
   # New file.
   if [ ! -e "$dest" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -455,6 +561,15 @@ deploy_subtree() {
   _srcroot=$1
   _destroot=$2
 
+  # Legacy whole-dir symlink guard: if the destination root (or an ancestor of
+  # it up to the config root) is itself a symlink, this is an OLD directory-
+  # symlink install. Do NOT descend through it -- warn once and skip the root.
+  if symlink_on_path "$_destroot"; then
+    warn_legacy_symlink "$_destroot"
+    return 0
+  fi
+
+  # Reuse the script-scoped temp path (cleaned by the EXIT/INT/TERM trap).
   _tmplist=$(mktemp "${TMPDIR:-/tmp}/dotfiles-install.XXXXXX") || {
     warn "could not create temp file; skipping $_srcroot"
     return 0
@@ -499,6 +614,17 @@ remove_one() {
   src=$1
   dest=$2
 
+  # Symlink guard (C1). This is the data-loss case that motivated the fix: if
+  # $dest resolves through a legacy directory symlink into the repo, `cmp -s`
+  # would compare the repo source to itself ("identical") and `rm` would delete
+  # a TRACKED file from the git working tree. Never compare/remove through a
+  # symlink -- report KEPT (legacy symlink) and skip. Tested BEFORE `[ -e ]`
+  # (which follows symlinks) so a legacy symlink is caught, not followed.
+  if symlink_on_path "$dest"; then
+    warn_legacy_symlink "$dest"
+    return 0
+  fi
+
   if [ ! -e "$dest" ]; then
     return 0
   fi
@@ -531,6 +657,17 @@ uninstall_subtree() {
   _srcroot=$1
   _destroot=$2
 
+  # Legacy whole-dir symlink guard (mirror of deploy_subtree): never descend
+  # through, compare across, or remove a legacy directory symlink. On a machine
+  # still running the OLD symlink install, $_destroot resolves THROUGH the
+  # symlink into the repo, so a byte-compare would match the repo file to itself
+  # and delete tracked files out of the working tree. Refuse and instruct.
+  if symlink_on_path "$_destroot"; then
+    warn_legacy_symlink "$_destroot"
+    return 0
+  fi
+
+  # Reuse the script-scoped temp path (cleaned by the EXIT/INT/TERM trap).
   _tmplist=$(mktemp "${TMPDIR:-/tmp}/dotfiles-uninstall.XXXXXX") || {
     warn "could not create temp file; skipping $_srcroot"
     return 0
