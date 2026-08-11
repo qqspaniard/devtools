@@ -1,21 +1,40 @@
 #!/bin/sh
-# render.sh -- generate tool-specific color adapters from a semantic palette.
+# render.sh -- generate native theme files from a semantic palette.
 #
-# Reads palettes/<theme>.json and, for each mode (dark, light), emits four
-# build artifacts into generated/:
+# The theming model is "native tool theme dirs": for a given palette we emit one
+# theme file per tool, in that tool's OWN theme-discovery directory, in that
+# tool's native format. Each tool then switches themes natively -- there is no
+# central controller, no "active" file, no current.* indirection.
 #
-#   <theme>-<mode>.wezterm.lua   -- a colors table applied as config.colors
-#   <theme>-<mode>.tmux.conf     -- the status-bar styling block
-#   <theme>-<mode>.nvim.lua      -- a highlight-group adapter (function)
-#   <theme>-<mode>/palette.sh    -- agent-state COLOR_* adapter (NOT spaceflight)
+# A palette is resolved as either:
+#   * a NAME  -> palettes/<name>.json   (the baked-in public palettes), or
+#   * a PATH  -> any *.json file        (local / third-party palettes, e.g. a
+#                                         brand palette kept OUTSIDE this repo).
 #
-# Everything under generated/ is a build artifact: never hand-edit, never
-# commit (see .gitignore). Re-running overwrites in place (idempotent).
+# For the resolved palette (with `dark` and `light` sub-objects; keys:
+# bg,fg,surface,overlay,muted,subtle,accent,accent2,warn,error,ok,
+# selection_bg,ansi[16],agent{working,needs_input,done,idle}) it emits:
+#
+#   wezterm  -> $WEZTERM_COLORS_DIR/<name>-dark.toml, <name>-light.toml
+#   nvim     -> $NVIM_COLORS_DIR/<name>-dark.lua,     <name>-light.lua
+#   opencode -> $OPENCODE_THEMES_DIR/<name>.json      (one file, both modes)
+#   tmux     -> $TMUX_THEMES_DIR/<name>-dark.conf,     <name>-light.conf
+#
+# Switching, per tool:
+#   wezterm  set config.color_scheme = '<name>-dark' (or use the scheme picker);
+#            wezterm auto-scans ~/.config/wezterm/colors/*.toml.
+#   nvim     :colorscheme <name>-dark
+#   opencode set the theme in opencode's config; it follows its own light/dark.
+#   tmux     source the chosen conf from tmux.conf (has no native theme registry).
+#
+# Output dirs default to the tools' real ~/.config locations but are overridable
+# via the env vars named above (for testing against scratch dirs). Everything is
+# idempotent: re-running overwrites outputs in place.
 #
 # Usage:
-#   render.sh            render all palettes (same as --all)
-#   render.sh --all      render every palettes/*.json
-#   render.sh <theme>    render just palettes/<theme>.json
+#   render.sh <name>     render palettes/<name>.json into all four tools
+#   render.sh <path>     render an arbitrary palette .json (e.g. a local brand)
+#   render.sh --all      render every baked-in palette in palettes/
 #
 # POSIX sh; needs `jq`.
 
@@ -23,7 +42,15 @@ set -eu
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PALETTES_DIR="$SCRIPT_DIR/palettes"
-GEN_DIR="$SCRIPT_DIR/generated"
+
+# ---------------------------------------------------------------------------
+# Native output dirs (overridable via env for testing against scratch dirs).
+# ---------------------------------------------------------------------------
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+: "${WEZTERM_COLORS_DIR:=$XDG_CONFIG_HOME/wezterm/colors}"
+: "${NVIM_COLORS_DIR:=$XDG_CONFIG_HOME/nvim/colors}"
+: "${OPENCODE_THEMES_DIR:=$XDG_CONFIG_HOME/opencode/themes}"
+: "${TMUX_THEMES_DIR:=$XDG_CONFIG_HOME/tmux/themes}"
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'render.sh: error: jq is required but not found on PATH.\n' >&2
@@ -34,30 +61,19 @@ fi
 g() { jq -r --arg m "$2" --arg k "$3" '.[$m][$k]' "$1"; }
 # a <palette-file> <mode> <index>  -> prints ansi[index].
 a() { jq -r --arg m "$2" --argjson i "$3" '.[$m].ansi[$i]' "$1"; }
-# ag <palette-file> <mode> <agent-key>  -> prints agent.<key>.
-ag() { jq -r --arg m "$2" --arg k "$3" '.[$m].agent[$k]' "$1"; }
 
-# render_mode <palette-file> <theme> <mode>
-render_mode() {
-  pf=$1
-  theme=$2
-  mode=$3
-
-  # Pull every semantic role once.
+# -----------------------------------------------------------------------------
+# wezterm: two TOML color files (one per mode). Auto-discovered by wezterm from
+# ~/.config/wezterm/colors/*.toml; user schemes override built-ins. The
+# [metadata] name is what wezterm registers the scheme as, and we make it equal
+# the filename stem so `config.color_scheme = '<name>-<mode>'` selects it.
+# -----------------------------------------------------------------------------
+render_wezterm() {
+  pf=$1; name=$2; mode=$3
   bg=$(g "$pf" "$mode" bg)
   fg=$(g "$pf" "$mode" fg)
-  surface=$(g "$pf" "$mode" surface)
-  overlay=$(g "$pf" "$mode" overlay)
-  muted=$(g "$pf" "$mode" muted)
-  subtle=$(g "$pf" "$mode" subtle)
   accent=$(g "$pf" "$mode" accent)
-  accent2=$(g "$pf" "$mode" accent2)
-  warn=$(g "$pf" "$mode" warn)
-  error=$(g "$pf" "$mode" error)
-  ok=$(g "$pf" "$mode" ok)
   selection_bg=$(g "$pf" "$mode" selection_bg)
-
-  # ANSI 0-15.
   c0=$(a "$pf" "$mode" 0);  c1=$(a "$pf" "$mode" 1)
   c2=$(a "$pf" "$mode" 2);  c3=$(a "$pf" "$mode" 3)
   c4=$(a "$pf" "$mode" 4);  c5=$(a "$pf" "$mode" 5)
@@ -67,51 +83,186 @@ render_mode() {
   c12=$(a "$pf" "$mode" 12); c13=$(a "$pf" "$mode" 13)
   c14=$(a "$pf" "$mode" 14); c15=$(a "$pf" "$mode" 15)
 
-  agent_working=$(ag "$pf" "$mode" working)
-  agent_needs_input=$(ag "$pf" "$mode" needs_input)
-  agent_done=$(ag "$pf" "$mode" done)
-  agent_idle=$(ag "$pf" "$mode" idle)
-
-  base="$GEN_DIR/$theme-$mode"
-
-  # -------------------------------------------------------------------------
-  # 1. wezterm -- a Lua colors table applied as config.colors.
-  # -------------------------------------------------------------------------
-  cat >"$base.wezterm.lua" <<EOF
--- GENERATED by dotfiles/themes/render.sh -- do not edit.
--- theme: $theme   mode: $mode
--- Applied as \`config.colors\` in wezterm/appearance.lua.
-return {
-  background = '$bg',
-  foreground = '$fg',
-  cursor_bg = '$accent',
-  cursor_border = '$accent',
-  cursor_fg = '$bg',
-  selection_bg = '$selection_bg',
-  selection_fg = '$fg',
-  ansi = {
-    '$c0', '$c1', '$c2', '$c3',
-    '$c4', '$c5', '$c6', '$c7',
-  },
-  brights = {
-    '$c8', '$c9', '$c10', '$c11',
-    '$c12', '$c13', '$c14', '$c15',
-  },
-}
-EOF
-
-  # -------------------------------------------------------------------------
-  # 2. tmux -- the status-bar styling block. Mirrors the STRUCTURE of the
-  #    original inline block in tmux.conf; only colors are substituted from the
-  #    palette. The #{@agent_glyphs} references belong to the agent feature and
-  #    are preserved verbatim.
-  # -------------------------------------------------------------------------
-  cat >"$base.tmux.conf" <<EOF
+  mkdir -p "$WEZTERM_COLORS_DIR"
+  cat >"$WEZTERM_COLORS_DIR/$name-$mode.toml" <<EOF
 # GENERATED by dotfiles/themes/render.sh -- do not edit.
-# theme: $theme   mode: $mode
-# Status-bar styling for the active theme. Sourced by tmux.conf via the stable
-# generated/current.tmux.conf indirection (see switch-theme). Structure mirrors
-# the original inline Rose Pine block; colors come from palettes/$theme.json.
+# palette: $name   mode: $mode
+# A wezterm color scheme. wezterm auto-scans ~/.config/wezterm/colors/*.toml and
+# registers each by its [metadata] name. Select with:
+#   config.color_scheme = '$name-$mode'   (or the built-in scheme picker).
+[metadata]
+name = "$name-$mode"
+
+[colors]
+foreground = "$fg"
+background = "$bg"
+cursor_bg = "$accent"
+cursor_border = "$accent"
+cursor_fg = "$bg"
+selection_bg = "$selection_bg"
+selection_fg = "$fg"
+ansi = ["$c0", "$c1", "$c2", "$c3", "$c4", "$c5", "$c6", "$c7"]
+brights = ["$c8", "$c9", "$c10", "$c11", "$c12", "$c13", "$c14", "$c15"]
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# nvim: a colorscheme file per mode, loadable via `:colorscheme <name>-<mode>`.
+# It sets termguicolors + colors_name and applies the highlight set. statusline.lua
+# reads PmenuSel / Directory / Visual after the colorscheme loads, so those are
+# defined here.
+# -----------------------------------------------------------------------------
+render_nvim() {
+  pf=$1; name=$2; mode=$3
+  bg=$(g "$pf" "$mode" bg)
+  fg=$(g "$pf" "$mode" fg)
+  surface=$(g "$pf" "$mode" surface)
+  muted=$(g "$pf" "$mode" muted)
+  subtle=$(g "$pf" "$mode" subtle)
+  accent=$(g "$pf" "$mode" accent)
+  accent2=$(g "$pf" "$mode" accent2)
+  warn=$(g "$pf" "$mode" warn)
+  error=$(g "$pf" "$mode" error)
+  ok=$(g "$pf" "$mode" ok)
+  selection_bg=$(g "$pf" "$mode" selection_bg)
+
+  mkdir -p "$NVIM_COLORS_DIR"
+  cat >"$NVIM_COLORS_DIR/$name-$mode.lua" <<EOF
+-- GENERATED by dotfiles/themes/render.sh -- do not edit.
+-- palette: $name   mode: $mode
+-- A Neovim colorscheme. Load with :colorscheme $name-$mode. Colors come from
+-- the palette's semantic roles. statusline.lua reads PmenuSel/Directory/Visual.
+vim.o.termguicolors = true
+vim.cmd('highlight clear')
+if vim.fn.exists('syntax_on') == 1 then
+  vim.cmd('syntax reset')
+end
+vim.g.colors_name = '$name-$mode'
+local set = vim.api.nvim_set_hl
+set(0, 'Normal',       { fg = '$fg', bg = '$bg' })
+set(0, 'NormalFloat',  { fg = '$fg', bg = '$surface' })
+set(0, 'Comment',      { fg = '$muted', italic = true })
+set(0, 'Constant',     { fg = '$accent2' })
+set(0, 'String',       { fg = '$ok' })
+set(0, 'Statement',    { fg = '$accent' })
+set(0, 'Identifier',   { fg = '$subtle' })
+set(0, 'Type',         { fg = '$accent2' })
+set(0, 'Visual',       { bg = '$selection_bg' })
+set(0, 'Pmenu',        { fg = '$fg', bg = '$surface' })
+set(0, 'PmenuSel',     { fg = '$bg', bg = '$accent' })
+set(0, 'Directory',    { fg = '$accent2' })
+set(0, 'LineNr',       { fg = '$muted' })
+set(0, 'CursorLineNr', { fg = '$warn', bold = true })
+set(0, 'StatusLine',   { fg = '$fg', bg = '$surface' })
+set(0, 'DiagnosticError', { fg = '$error' })
+set(0, 'DiagnosticWarn',  { fg = '$warn' })
+set(0, 'DiagnosticInfo',  { fg = '$accent2' })
+set(0, 'DiagnosticHint',  { fg = '$muted' })
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# opencode: one theme JSON carrying BOTH modes. opencode accepts inline hex per
+# role and follows its own light/dark setting. We build it with jq so the hex
+# values are injected safely and the output is valid JSON. Role set mirrors what
+# opencode expects (see ~/.config/opencode/themes/matrix-ice.json).
+# -----------------------------------------------------------------------------
+render_opencode() {
+  pf=$1; name=$2
+
+  mkdir -p "$OPENCODE_THEMES_DIR"
+  jq -n --slurpfile p "$pf" '
+    ($p[0].dark)  as $d |
+    ($p[0].light) as $l |
+    # role r <- (dark-key, light-key) from the two mode objects.
+    def role(dk; lk): { dark: $d[dk], light: $l[lk] };
+    {
+      "$schema": "https://opencode.ai/theme.json",
+      "theme": {
+        "primary":            role("accent";  "accent"),
+        "secondary":          role("accent2"; "accent2"),
+        "accent":             role("accent2"; "accent2"),
+        "error":              role("error";   "error"),
+        "warning":            role("warn";    "warn"),
+        "success":            role("ok";      "ok"),
+        "info":               role("accent2"; "accent2"),
+        "text":               role("fg";      "fg"),
+        "textMuted":          role("muted";   "muted"),
+        "background":         role("bg";      "bg"),
+        "backgroundPanel":    role("surface"; "surface"),
+        "backgroundElement":  role("overlay"; "overlay"),
+        "border":             role("overlay"; "overlay"),
+        "borderActive":       role("accent";  "accent"),
+        "borderSubtle":       role("surface"; "surface"),
+
+        "diffAdded":            role("ok";       "ok"),
+        "diffRemoved":          role("error";    "error"),
+        "diffContext":          role("muted";    "muted"),
+        "diffHunkHeader":       role("muted";    "muted"),
+        "diffHighlightAdded":   role("accent2";  "accent2"),
+        "diffHighlightRemoved": role("error";    "error"),
+        "diffAddedBg":          role("surface";  "surface"),
+        "diffRemovedBg":        role("surface";  "surface"),
+        "diffContextBg":        role("bg";       "bg"),
+        "diffLineNumber":       role("overlay";  "overlay"),
+        "diffAddedLineNumberBg":   role("surface"; "surface"),
+        "diffRemovedLineNumberBg": role("surface"; "surface"),
+
+        "markdownText":           role("fg";      "fg"),
+        "markdownHeading":        role("accent";  "accent"),
+        "markdownLink":           role("accent2"; "accent2"),
+        "markdownLinkText":       role("accent2"; "accent2"),
+        "markdownCode":           role("ok";      "ok"),
+        "markdownBlockQuote":     role("muted";   "muted"),
+        "markdownEmph":           role("warn";    "warn"),
+        "markdownStrong":        role("accent";  "accent"),
+        "markdownHorizontalRule": role("overlay"; "overlay"),
+        "markdownListItem":       role("accent";  "accent"),
+        "markdownListEnumeration":role("accent2"; "accent2"),
+        "markdownImage":          role("accent2"; "accent2"),
+        "markdownImageText":      role("accent2"; "accent2"),
+        "markdownCodeBlock":      role("ok";      "ok"),
+
+        "syntaxComment":     role("muted";   "muted"),
+        "syntaxKeyword":     role("accent";  "accent"),
+        "syntaxFunction":    role("accent2"; "accent2"),
+        "syntaxVariable":    role("fg";      "fg"),
+        "syntaxString":      role("ok";      "ok"),
+        "syntaxNumber":      role("warn";    "warn"),
+        "syntaxType":        role("accent2"; "accent2"),
+        "syntaxOperator":    role("subtle";  "subtle"),
+        "syntaxPunctuation": role("subtle";  "subtle")
+      }
+    }
+  ' >"$OPENCODE_THEMES_DIR/$name.json"
+}
+
+# -----------------------------------------------------------------------------
+# tmux: a status-bar styling conf per mode. tmux has no native theme registry,
+# so tmux.conf sources one of these by filename. Structure mirrors the original
+# inline block; the #{@agent_glyphs} references belong to the agent-status
+# feature and are preserved verbatim.
+# -----------------------------------------------------------------------------
+render_tmux() {
+  pf=$1; name=$2; mode=$3
+  bg=$(g "$pf" "$mode" bg)
+  fg=$(g "$pf" "$mode" fg)
+  surface=$(g "$pf" "$mode" surface)
+  overlay=$(g "$pf" "$mode" overlay)
+  muted=$(g "$pf" "$mode" muted)
+  subtle=$(g "$pf" "$mode" subtle)
+  accent=$(g "$pf" "$mode" accent)
+  accent2=$(g "$pf" "$mode" accent2)
+  warn=$(g "$pf" "$mode" warn)
+  selection_bg=$(g "$pf" "$mode" selection_bg)
+
+  mkdir -p "$TMUX_THEMES_DIR"
+  cat >"$TMUX_THEMES_DIR/$name-$mode.conf" <<EOF
+# GENERATED by dotfiles/themes/render.sh -- do not edit.
+# palette: $name   mode: $mode
+# Status-bar styling. tmux has no native theme registry; tmux.conf sources one
+# of these by filename. Structure mirrors the original inline block; colors come
+# from the palette. #{@agent_glyphs} is the agent-status overlay and is preserved.
 
 set -g status on
 set -g status-interval 5
@@ -147,112 +298,84 @@ set -g message-command-style "bg=$overlay,fg=$fg"
 # Copy-mode selection highlight.
 setw -g mode-style "bg=$selection_bg,fg=$fg"
 EOF
-
-  # -------------------------------------------------------------------------
-  # 3. nvim -- a highlight-group adapter. Returns a function that applies a
-  #    minimal-but-real colorscheme via nvim_set_hl. statusline.lua reads
-  #    PmenuSel / Directory / Visual after this loads, so those are defined
-  #    with sensible fg/bg.
-  # -------------------------------------------------------------------------
-  cat >"$base.nvim.lua" <<EOF
--- GENERATED by dotfiles/themes/render.sh -- do not edit.
--- theme: $theme   mode: $mode
--- Returns a function that applies a minimal highlight scheme. Loaded by
--- nvim/lua/colorscheme.lua. Colors come from palettes/$theme.json.
-local hl = {
-  bg = '$bg',
-  fg = '$fg',
-  surface = '$surface',
-  overlay = '$overlay',
-  muted = '$muted',
-  subtle = '$subtle',
-  accent = '$accent',
-  accent2 = '$accent2',
-  warn = '$warn',
-  error = '$error',
-  ok = '$ok',
-  selection_bg = '$selection_bg',
 }
 
-return function()
-  local set = vim.api.nvim_set_hl
-  set(0, 'Normal',       { fg = hl.fg, bg = hl.bg })
-  set(0, 'NormalFloat',  { fg = hl.fg, bg = hl.surface })
-  set(0, 'Comment',      { fg = hl.muted, italic = true })
-  set(0, 'Constant',     { fg = hl.accent2 })
-  set(0, 'String',       { fg = hl.ok })
-  set(0, 'Statement',    { fg = hl.accent })
-  set(0, 'Identifier',   { fg = hl.subtle })
-  set(0, 'Type',         { fg = hl.accent2 })
-  set(0, 'Visual',       { bg = hl.selection_bg })
-  set(0, 'Pmenu',        { fg = hl.fg, bg = hl.surface })
-  set(0, 'PmenuSel',     { fg = hl.bg, bg = hl.accent })
-  set(0, 'Directory',    { fg = hl.accent2 })
-  set(0, 'LineNr',       { fg = hl.muted })
-  set(0, 'CursorLineNr', { fg = hl.warn, bold = true })
-  set(0, 'StatusLine',   { fg = hl.fg, bg = hl.surface })
-  set(0, 'DiagnosticError', { fg = hl.error })
-  set(0, 'DiagnosticWarn',  { fg = hl.warn })
-  set(0, 'DiagnosticInfo',  { fg = hl.accent2 })
-  set(0, 'DiagnosticHint',  { fg = hl.muted })
-end
-EOF
-
-  # -------------------------------------------------------------------------
-  # 4. agent-state palette.sh -- mirrors the CONTRACT of
-  #    tmux/themes/spaceflight/palette.sh (same COLOR_* names + export line) but
-  #    lives here in generated/. Provided for completeness/future use; it does
-  #    NOT replace or touch the spaceflight file.
-  # -------------------------------------------------------------------------
-  mkdir -p "$base"
-  cat >"$base/palette.sh" <<EOF
-# GENERATED by dotfiles/themes/render.sh -- do not edit.
-# theme: $theme   mode: $mode
-# Agent-state color adapter. Mirrors the contract of
-# tmux/themes/spaceflight/palette.sh (identical COLOR_* names) but is generated
-# from palettes/$theme.json. Provided for completeness; the spaceflight glyph
-# renderer still sources its own palette.sh today.
-
-COLOR_WORKING="$agent_working"
-COLOR_NEEDS_INPUT="$agent_needs_input"
-COLOR_DONE="$agent_done"
-COLOR_IDLE="$agent_idle"
-
-export COLOR_WORKING COLOR_NEEDS_INPUT COLOR_DONE COLOR_IDLE
-EOF
-
-  printf '  rendered %s (%s)\n' "$theme" "$mode"
-}
-
-# render_theme <theme>
-render_theme() {
-  theme=$1
-  pf="$PALETTES_DIR/$theme.json"
+# render_palette <palette-file> <name>
+render_palette() {
+  pf=$1
+  name=$2
   if [ ! -f "$pf" ]; then
-    printf 'render.sh: error: no palette: %s\n' "$pf" >&2
+    printf 'render.sh: error: no palette file: %s\n' "$pf" >&2
     return 1
   fi
   if ! jq -e '.dark and .light' "$pf" >/dev/null 2>&1; then
     printf 'render.sh: error: palette %s missing dark/light keys or invalid JSON\n' "$pf" >&2
     return 1
   fi
-  mkdir -p "$GEN_DIR"
-  render_mode "$pf" "$theme" dark
-  render_mode "$pf" "$theme" light
+
+  render_wezterm "$pf" "$name" dark
+  render_wezterm "$pf" "$name" light
+  render_nvim    "$pf" "$name" dark
+  render_nvim    "$pf" "$name" light
+  render_opencode "$pf" "$name"
+  render_tmux    "$pf" "$name" dark
+  render_tmux    "$pf" "$name" light
+
+  printf '  rendered %s -> wezterm/nvim/opencode/tmux\n' "$name"
+}
+
+# resolve_and_render <arg>  -- arg is a NAME (palettes/<name>.json) or a PATH.
+resolve_and_render() {
+  arg=$1
+  # A path: contains a slash, or ends in .json, or exists as a file as given.
+  case "$arg" in
+    */* | *.json)
+      if [ ! -f "$arg" ]; then
+        printf 'render.sh: error: no such palette file: %s\n' "$arg" >&2
+        return 1
+      fi
+      name=$(basename "$arg" .json)
+      render_palette "$arg" "$name"
+      ;;
+    *)
+      pf="$PALETTES_DIR/$arg.json"
+      if [ ! -f "$pf" ]; then
+        printf 'render.sh: error: no baked-in palette named %s (looked for %s)\n' "$arg" "$pf" >&2
+        printf '  available:\n' >&2
+        for p in "$PALETTES_DIR"/*.json; do
+          [ -e "$p" ] || continue
+          printf '    %s\n' "$(basename "$p" .json)" >&2
+        done
+        printf '  (or pass a path to a .json palette file)\n' >&2
+        return 1
+      fi
+      render_palette "$pf" "$arg"
+      ;;
+  esac
 }
 
 main() {
-  arg=${1:---all}
-  case "$arg" in
+  if [ "$#" -eq 0 ]; then
+    printf 'render.sh: error: a palette name or path is required (or --all).\n' >&2
+    printf 'Usage: render.sh <name|path.json> | --all\n' >&2
+    exit 2
+  fi
+  case "$1" in
     --all)
       for pf in "$PALETTES_DIR"/*.json; do
         [ -e "$pf" ] || continue
-        theme=$(basename "$pf" .json)
-        render_theme "$theme"
+        name=$(basename "$pf" .json)
+        render_palette "$pf" "$name"
       done
       ;;
+    -h | --help)
+      printf 'Usage: render.sh <name|path.json> | --all\n'
+      printf '  <name>       render palettes/<name>.json (baked-in public palette)\n'
+      printf '  <path.json>  render an arbitrary palette file (e.g. a local brand)\n'
+      printf '  --all        render every baked-in palette in palettes/\n'
+      ;;
     *)
-      render_theme "$arg"
+      resolve_and_render "$1"
       ;;
   esac
 }

@@ -10,31 +10,24 @@ local M = {}
 -- Apply appearance settings onto an existing config table (built by
 -- wezterm.config_builder() in the entry point). Mutates and returns `config`.
 function M.apply(config)
-  -- Colors come from the unified theming system (dotfiles/themes/). The active
-  -- theme+mode is rendered to a plain Lua colors table at
-  -- ~/.config/themes/generated/current.wezterm.lua by render.sh, and selected
-  -- via switch-theme. We load that table and apply it as config.colors so the
-  -- terminal palette stays in lockstep with tmux and nvim.
+  -- Colors come from the theming system (dotfiles/themes/). render.sh generates
+  -- native wezterm color schemes into ~/.config/wezterm/colors/<name>-<mode>.toml
+  -- (one per palette+mode). WezTerm auto-scans ~/.config/wezterm/colors/*.toml
+  -- on POSIX systems and registers each scheme by its [metadata] name (which we
+  -- make equal the filename stem), so a generated scheme is selectable simply by
+  -- setting config.color_scheme below. User schemes override WezTerm's built-ins.
   --
-  -- Robustness: if the generated file is absent or fails to load (fresh
-  -- checkout before install.sh runs render.sh, or a bad edit), fall back to
-  -- WezTerm's built-in Rose Pine Moon so the terminal never fails to launch.
+  -- Switch themes by changing this scheme name (e.g. 'nebula-light',
+  -- 'rosepine-dark', or a locally-generated one) or via WezTerm's built-in scheme
+  -- picker. The committed default is nebula-dark. If the generated file is absent
+  -- (fresh checkout before install.sh runs render.sh), WezTerm warns and falls
+  -- back to its own defaults; run `sh dotfiles/themes/render.sh --all` to create
+  -- the schemes.
   --
-  -- (Future: macOS light/dark auto-follow could be wired here via
-  -- wezterm.gui.get_appearance() poking switch-theme; kept out for now so this
+  -- (Future: macOS light/dark auto-follow could pick '<name>-light' vs
+  -- '<name>-dark' via wezterm.gui.get_appearance(); kept out for now so this
   -- stays simple and deterministic.)
-  local home = os.getenv('HOME') or ''
-  local theme_file = home .. '/.config/themes/generated/current.wezterm.lua'
-  local ok, colors = pcall(dofile, theme_file)
-  if ok and type(colors) == 'table' then
-    config.colors = colors
-  else
-    config.color_scheme = 'rose-pine-moon'
-    config.colors = {
-      selection_fg = '#e0def4',
-      selection_bg = '#44415a',
-    }
-  end
+  config.color_scheme = 'nebula-dark'
 
   -- Font. The plan standardizes on Hack Nerd Font at size 15. WezTerm will
   -- fall back to a system monospace font (and its own bundled Nerd Font

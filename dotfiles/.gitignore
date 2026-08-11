@@ -1,5 +1,0 @@
-# Generated theme adapters are build artifacts: emitted by
-# themes/render.sh from themes/palettes/*.json. Never hand-edited, never
-# committed. Regenerate with `sh themes/render.sh --all` (install.sh also
-# runs it). The stable current.* copies are refreshed by themes/switch-theme.
-themes/generated/

@@ -42,11 +42,9 @@ dotfiles/
 ├── tmux/
 │   └── tmux.conf        # prefix, splits, navigation, clipboard, status bar
 ├── nvim/                # portable Neovim config (options, lsp, statusline, …)
-├── themes/              # unified color themes (see "Themes" below)
-│   ├── palettes/       # <theme>.json — the source of truth (light + dark)
-│   ├── render.sh       # generates per-tool color adapters from a palette
-│   ├── switch-theme    # selects the active theme+mode; reloads tmux
-│   └── generated/      # build output (git-ignored); sourced by the tools
+├── themes/              # color themes (see "Themes" below)
+│   ├── palettes/       # <name>.json — the source of truth (light + dark)
+│   └── render.sh       # generates native theme files into each tool's own dir
 └── zsh/
     └── interactive.zsh  # optional: completion + fzf + autosuggestions +
                          # syntax-highlighting (you add one source line)
@@ -54,44 +52,66 @@ dotfiles/
 
 ## Themes
 
-WezTerm, tmux, and Neovim share one color palette so a single switch restyles
-every surface at once. Two themes ship, each with a **light** and **dark**
+WezTerm, tmux, Neovim, and opencode share color palettes. The model is **native
+tool theme dirs**: `render.sh` transpiles a palette into each tool's *own*
+native theme format and drops it in that tool's *own* theme-discovery directory,
+so each tool switches themes natively — no central controller, no "active" file,
+no indirection. Two public palettes ship, each with a **light** and **dark**
 mode:
 
 | Theme | Look |
 |-------|------|
 | `nebula` | deep-space blue-violet with nebula-cyan / plasma-violet accents |
-| `rosepine` | Rose Pine (Moon dark / Dawn light) — the prior default, preserved |
+| `rosepine` | Rose Pine (Moon dark / Dawn light) |
+
+### Generating
+
+```sh
+~/.config/themes/render.sh <name>        # a baked-in palette: nebula, rosepine
+~/.config/themes/render.sh /path/pal.json # any palette .json (local/third-party)
+~/.config/themes/render.sh --all         # every baked-in palette
+```
+
+`render.sh` writes native theme files into each tool's own directory:
+
+- WezTerm → `~/.config/wezterm/colors/<name>-<mode>.toml` (auto-scanned; each
+  registered by its `[metadata] name`)
+- Neovim → `~/.config/nvim/colors/<name>-<mode>.lua` (loadable via
+  `:colorscheme <name>-<mode>`)
+- opencode → `~/.config/opencode/themes/<name>.json` (one file, both modes)
+- tmux → `~/.config/tmux/themes/<name>-<mode>.conf` (status-bar styling)
+
+`install.sh` runs `render.sh --all` after copying, so the public themes exist in
+place (needs `jq`).
 
 ### Switching
 
-```sh
-~/.config/themes/switch-theme <theme> [dark|light]   # e.g. nebula dark
-```
+Each tool switches natively — no shared switcher:
 
-This writes `~/.config/themes/active`, refreshes the generated adapters, and
-reloads tmux immediately. WezTerm and Neovim pick up the change on their next
-config reload / new window (or buffer). The committed default is
-`nebula dark`.
+- **WezTerm**: set `config.color_scheme = '<name>-<mode>'` in
+  `wezterm/appearance.lua`, or use WezTerm's built-in scheme picker.
+- **Neovim**: `:colorscheme <name>-<mode>` (the committed default is set in
+  `nvim/lua/colorscheme.lua`).
+- **opencode**: set the theme in opencode's config; it follows its own
+  light/dark setting from the one JSON.
+- **tmux**: change the sourced filename in `tmux.conf` (tmux has no native theme
+  registry) and reload (`prefix + r`).
 
-### How it works
+The committed default across the tools is `nebula-dark`.
 
-The **palette** (`themes/palettes/<theme>.json`) is the single source of truth:
+### Palettes
+
+The **palette** (`themes/palettes/<name>.json`) is the single source of truth:
 semantic roles (bg, fg, accent, …) plus a 16-color ANSI set and agent-state
-colors, defined for both modes. `render.sh` transpiles a palette into
-per-tool color adapters under `themes/generated/` (git-ignored build output):
+colors, defined for both modes. Edit a palette and re-run `render.sh <name>` (or
+`--all`) to regenerate. If a tool's generated file is missing (fresh checkout
+before `install.sh` runs `render.sh`), each tool falls back to a sane built-in
+so nothing breaks.
 
-- `*.wezterm.lua` — applied as `config.colors`
-- `*.tmux.conf` — the status-bar styling, sourced by `tmux.conf`
-- `*.nvim.lua` — highlight groups (nvim runs with `termguicolors`)
-
-`switch-theme` keeps stable `current.*` copies of the active selection, which
-each tool sources — so the tool configs need no shell expansion. Edit a palette,
-re-run `render.sh <theme>` (or `--all`), and every tool updates together. If the
-generated files are missing (fresh checkout before `install.sh` runs
-`render.sh`), each tool falls back to a sane built-in so nothing breaks.
-
-
+Local or third-party palettes (e.g. a private brand palette you do NOT want in
+this repo) live outside the repo — drop them in `~/.config/themes/palettes/` and
+generate with `render.sh ~/.config/themes/palettes/<name>.json`. The installer
+renders only the baked-in public palettes, never local ones.
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
@@ -123,8 +143,8 @@ This **copies** the tracked files into real directories under `~/.config`
   `themes/spaceflight/`)
 - `~/.config/nvim/` ← `<repo>/dotfiles/nvim/` (incl. `lua/`, `lsp/`)
 - `~/.config/zsh/` ← `<repo>/dotfiles/zsh/`
-- `~/.config/themes/` ← `<repo>/dotfiles/themes/` (excluding the generated
-  build output)
+- `~/.config/themes/` ← `<repo>/dotfiles/themes/` (`render.sh` + public
+  `palettes/`; the generated theme files land in each tool's own dir)
 - `~/.config/opencode/plugins/tmux-agent-state.ts` (the opencode-side half of
   the tmux agent-status feature)
 - `~/.tmux.conf` (a single-file compat shim for tmux older than 3.1, which
@@ -191,8 +211,8 @@ Because the deployed files are **real files you may have edited**, uninstall is
 conservative. For each managed file it removes the destination **only if** it is
 byte-identical to the current repo source (i.e. unchanged since deploy) —
 reported `REMOVED`. A file you have modified is left in place and reported
-`KEPT (modified)`. Files that are not in the manifest (generated themes, the
-`themes/generated/` build output, your own files) are **never** touched, and only
+`KEPT (modified)`. Files that are not in the manifest (the generated theme files
+under each tool's own dir, your own files) are **never** touched, and only
 directories left empty by removals are pruned — it never `rm -rf`s a config dir.
 
 To remove things manually, delete the specific files or directories yourself;
