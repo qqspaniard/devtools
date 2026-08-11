@@ -1,44 +1,65 @@
 #!/bin/sh
-# install.sh -- portable installer for the WezTerm + tmux + zsh dotfiles.
+# install.sh -- portable installer for the WezTerm + tmux + zsh + nvim dotfiles.
 #
-# What it does:
-#   * Symlinks ~/.config/wezterm  -> <repo>/dotfiles/wezterm   (whole directory)
-#   * Symlinks ~/.config/tmux     -> <repo>/dotfiles/tmux      (whole directory)
-#   * Symlinks ~/.tmux.conf       -> ~/.config/tmux/tmux.conf  (compat shim)
-#   * Symlinks ~/.config/zsh      -> <repo>/dotfiles/zsh       (whole directory)
-#   * Symlinks ~/.config/nvim     -> <repo>/dotfiles/nvim      (whole directory)
-#   * Symlinks ~/.config/themes   -> <repo>/dotfiles/themes    (whole directory)
-#   * Runs the theme generator (render.sh) so the active theme's generated
-#       color adapters exist for wezterm/tmux/nvim to source (needs jq).
-#   * Symlinks the tmux agent-status opencode plugin into
-#       ~/.config/opencode/plugins/  (see "opencode plugin" note below)
+# Model: COPY, not symlink. For each managed source subtree this installer
+# copies tracked files, file-by-file, into REAL directories under ~/.config
+# (creating real dirs, never symlinks). This is deliberate:
 #
-# Why a directory symlink for WezTerm and Neovim: linking the entire directory
-# guarantees the modular `require`d fragments (wezterm's appearance/keybindings,
-# nvim's lua/ and lsp/ modules) always resolve, in one atomic link. The tmux
-# directory is linked whole for the same reason: tmux.conf sources sibling
-# scripts/ and themes/ (the agent-status feature), which only resolve if the
-# whole tmux/ dir is present at a stable path. ~/.tmux.conf is kept as a thin
-# symlink INTO that linked dir so tmux older than 3.1 (which only reads the
-# classic ~/.tmux.conf path) still works.
+#   * Worktrees work. A directory symlink pins the live config to ONE checkout
+#     (the symlink target), so you could not test config changes from a git
+#     worktree. Copying deploys from whatever checkout you run install.sh in.
+#   * Generated files can coexist. The theme generator (themes/render.sh) emits
+#     build artifacts into config dirs. If a config dir WERE the repo (a symlink),
+#     writing a generated file into it would write into the repo. With real
+#     dirs, tracked and generated files live side by side, and the installer
+#     manages only the tracked ones (see the EXCLUDE list).
 #
-# opencode plugin: the agent-status feature has an opencode-side half
-# (tmux/plugins/tmux-agent-state.ts) that must live in ~/.config/opencode/
-# plugins/ to be loaded. It is co-located with the tmux feature it belongs to
-# and symlinked into place here. tmux.conf exports TMUX_AGENT_SCRIPT_DIR so the
-# plugin and tmux both find the shared scripts/ dir.
+# What it copies (see the MANIFEST table below):
+#   * wezterm/  -> ~/.config/wezterm/        (excludes future colors/ output)
+#   * tmux/     -> ~/.config/tmux/           (incl. scripts/, themes/spaceflight/)
+#   * nvim/     -> ~/.config/nvim/           (incl. lua/, lsp/; excludes colors/)
+#   * zsh/      -> ~/.config/zsh/
+#   * themes/   -> ~/.config/themes/         (excludes generated/ build output)
+#   * tmux/plugins/tmux-agent-state.ts -> ~/.config/opencode/plugins/... (single)
+#   * tmux/tmux.conf                   -> ~/.tmux.conf   (compat shim, single)
 #
-# The zsh directory is linked whole (same rationale as wezterm) so future
-# fragments alongside interactive.zsh resolve in one atomic link. This installer
-# does NOT edit your ~/.zshrc. To activate the fragment, add exactly one line to
-# your own ~/.zshrc (see dotfiles/README.md):
+# The recursive subtree copy mirrors structure, so nested dirs (nvim's lua/ and
+# lsp/, tmux's scripts/ and themes/spaceflight/) deploy automatically and new
+# tracked files need no manifest edit. It also preserves file mode, so tmux
+# scripts and the opencode plugin stay executable.
+#
+# Two entries below are duplicate deploys and that is intended: the opencode
+# plugin (tmux-agent-state.ts) and the ~/.tmux.conf shim both also live under
+# the tmux/ subtree. The tmux/ subtree copy places them under ~/.config/tmux/
+# (where tmux scripts reference them); the two extra single-file entries place
+# copies at the additional paths those consumers require (opencode's plugin dir,
+# and the classic ~/.tmux.conf path for tmux < 3.1).
+#
+# After copying, the theme generator (render.sh) runs so the active theme's
+# generated color adapters exist for wezterm/tmux/nvim to source (needs jq).
+#
+# The zsh directory is copied whole so future fragments alongside interactive.zsh
+# deploy automatically. This installer does NOT edit your ~/.zshrc. To activate
+# the fragment, add exactly one line to your own ~/.zshrc (see dotfiles/README.md):
 #   source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"
 #
+# Conflict handling: when a destination file already exists and DIFFERS from the
+# repo source, the installer treats it as a CONFLICT. Interactively (a TTY is
+# available) it prompts per file: overwrite / skip / diff / all-overwrite / quit.
+# Every overwrite first backs the existing file up to <dest>.bak.<epoch>.
+# Non-interactively it SKIPS and warns (never clobbers silently) unless --force.
+#
+# Uninstall is SAFE: because copies are real files you may have edited, a target
+# is removed ONLY if it is byte-identical to the repo's current source for it.
+# A modified target is KEPT. Files not in the manifest (generated themes, your
+# own files) are never touched.
+#
 # Safety:
-#   * Idempotent: re-running when links already point at the right targets is a
-#     no-op.
-#   * Never overwrites regular files, directories, or unrelated symlinks. It
-#     prints a clear remediation message and leaves your data untouched.
+#   * Idempotent: re-running with no repo changes is all-OK -- no prompts, no
+#     backups, no writes.
+#   * Only ever writes individual files (and mkdir -p their parents). Never
+#     deletes or wipes a directory; uninstall removes only files it recognizes
+#     as unchanged copies, and prunes only dirs left empty.
 #
 # POSIX sh; no bashisms. Works on macOS, Linux, and WSL.
 
@@ -61,43 +82,88 @@ while [ -h "$script_path" ]; do
 done
 SCRIPT_DIR=$(cd "$(dirname "$script_path")" && pwd)
 
-# The repo's dotfiles source directories.
-WEZTERM_SRC="$SCRIPT_DIR/wezterm"
-TMUX_DIR_SRC="$SCRIPT_DIR/tmux"
-ZSH_SRC="$SCRIPT_DIR/zsh"
-NVIM_SRC="$SCRIPT_DIR/nvim"
-THEMES_SRC="$SCRIPT_DIR/themes"
-OC_PLUGIN_SRC="$SCRIPT_DIR/tmux/plugins/tmux-agent-state.ts"
-
-# Destinations.
+# Destination root.
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
-WEZTERM_DEST="$XDG_CONFIG_HOME/wezterm"
-TMUX_DIR_DEST="$XDG_CONFIG_HOME/tmux"
-TMUX_CONF_DEST="$HOME/.tmux.conf"
-ZSH_DEST="$XDG_CONFIG_HOME/zsh"
-NVIM_DEST="$XDG_CONFIG_HOME/nvim"
-THEMES_DEST="$XDG_CONFIG_HOME/themes"
-OC_PLUGIN_DEST="$XDG_CONFIG_HOME/opencode/plugins/tmux-agent-state.ts"
-# ~/.tmux.conf is a compat shim for tmux < 3.1 (which only reads the classic
-# path). It points straight at the repo's tmux.conf. Modern tmux reads the same
-# file via the ~/.config/tmux dir link, which also makes sibling scripts/ and
-# themes/ resolve. The two links are independent by design.
-TMUX_CONF_SRC="$TMUX_DIR_SRC/tmux.conf"
+
+# The theme source (also its own managed subtree, below) drives the post-copy
+# render step.
+THEMES_SRC="$SCRIPT_DIR/themes"
+
+# ---------------------------------------------------------------------------
+# MANIFEST -- source subtree (or single file) -> target.
+# ---------------------------------------------------------------------------
+# Each managed entry is one line in $MANIFEST, "<src>|<dest>", where paths are
+# absolute. A trailing form is not needed: whether an entry is a directory
+# subtree or a single file is decided at deploy time by testing -d "$src".
+#
+# For subtree entries, files whose path matches any glob in $EXCLUDES (matched
+# against the path RELATIVE to the subtree source root) are pruned -- they are
+# generated build output the installer must neither deploy nor, on uninstall,
+# remove.
+#
+#   Source (under $SCRIPT_DIR)              Target                                   Notes
+#   wezterm/                                ~/.config/wezterm/                       exclude colors/ (future generated themes)
+#   tmux/                                   ~/.config/tmux/                          incl. scripts/ + themes/spaceflight/ (tracked)
+#   nvim/                                   ~/.config/nvim/                          incl. lua/ + lsp/; exclude colors/
+#   zsh/                                    ~/.config/zsh/                           --
+#   themes/                                 ~/.config/themes/                        exclude generated/ (render.sh build output)
+#   tmux/plugins/tmux-agent-state.ts        ~/.config/opencode/plugins/...           single file (opencode plugin)
+#   tmux/tmux.conf                          ~/.tmux.conf                             single-file compat shim for tmux < 3.1
+#
+# Newlines separate entries; a leading blank line is harmless (skipped).
+MANIFEST="\
+$SCRIPT_DIR/wezterm|$XDG_CONFIG_HOME/wezterm
+$SCRIPT_DIR/tmux|$XDG_CONFIG_HOME/tmux
+$SCRIPT_DIR/nvim|$XDG_CONFIG_HOME/nvim
+$SCRIPT_DIR/zsh|$XDG_CONFIG_HOME/zsh
+$SCRIPT_DIR/themes|$XDG_CONFIG_HOME/themes
+$SCRIPT_DIR/tmux/plugins/tmux-agent-state.ts|$XDG_CONFIG_HOME/opencode/plugins/tmux-agent-state.ts
+$SCRIPT_DIR/tmux/tmux.conf|$HOME/.tmux.conf"
+
+# EXCLUDES -- shell globs matched (via `case`) against each subtree file's path
+# RELATIVE to its source root. Pruned files are never deployed and never removed
+# on uninstall: these are generated-theme build artifacts that must coexist in
+# the real config dirs without the installer managing or wiping them.
+#
+#   */colors/*   wezterm + nvim generated color output (dir reserved for future
+#                per-tool generated themes; none tracked today).
+#   generated/*  themes/generated/* -- render.sh build output (see .gitignore).
+#
+# NOTE: the eventual generated tmux theme conf path (to be finalized when the
+# theming work lands) belongs here too. Leave the clearly-marked slot below and
+# add its glob then. Do NOT exclude tmux/themes/spaceflight/* -- that is legit
+# tracked config that should deploy.
+EXCLUDES="\
+*/colors/*
+colors/*
+generated/*
+*/generated/*"
+# <<< ADD-GENERATED-TMUX-THEME-GLOB-HERE when the theme output path is finalized.
 
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
 DRY_RUN=0
 UNINSTALL=0
+FORCE=0
+# Set to 1 the first time the user answers "a" (all-overwrite) at a prompt.
+OVERWRITE_ALL=0
 
 usage() {
   cat <<EOF
-Usage: install.sh [--dry-run] [--uninstall] [-h|--help]
+Usage: install.sh [--dry-run] [--force] [--uninstall] [-h|--help]
 
-  (no options)  Create the symlinks described above.
-  --dry-run     Print what would happen; make no changes.
-  --uninstall   Remove ONLY the symlinks this installer created (links that
-                point back into this repo). Leaves anything else alone.
+  (no options)  Copy the managed dotfiles into real dirs under ~/.config
+                (and the ~/.tmux.conf shim). Existing, differing files are
+                treated as conflicts: prompted interactively, skipped when
+                non-interactive.
+  --dry-run     Print what WOULD happen (NEW/UPDATE/OK/CONFLICT); change nothing
+                and never prompt.
+  --force       Overwrite conflicting files without prompting. Each overwrite is
+                still backed up first to <dest>.bak.<epoch>.
+  --uninstall   Remove ONLY managed files that are byte-identical to the current
+                repo source (unchanged since deploy); KEEP modified ones. Never
+                touches files outside the manifest. Prunes empty dirs it created.
   -h, --help    Show this help.
 EOF
 }
@@ -105,6 +171,7 @@ EOF
 for arg in "$@"; do
   case $arg in
     --dry-run) DRY_RUN=1 ;;
+    --force) FORCE=1 ;;
     --uninstall) UNINSTALL=1 ;;
     -h | --help)
       usage
@@ -119,13 +186,71 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
-# Output helpers
+# Interactive-terminal detection
 # ---------------------------------------------------------------------------
+# Whether we can PROMPT the user. Testing `[ -r /dev/tty ]` is NOT sufficient:
+# on a detached session the device node exists and tests readable, yet actually
+# OPENING it fails ("Device not configured"), which under `set -e` would abort
+# the whole run. So we probe by truly opening /dev/tty for reading, in a
+# subshell, with all output discarded. HAVE_TTY=1 only if that open succeeds.
+if [ "${DRY_RUN:-0}" -eq 1 ]; then
+  HAVE_TTY=0
+elif (exec </dev/tty) 2>/dev/null; then
+  HAVE_TTY=1
+else
+  HAVE_TTY=0
+fi
+
+# ---------------------------------------------------------------------------
+# Color / output helpers (POSIX sh + ANSI)
+# ---------------------------------------------------------------------------
+# Respect NO_COLOR, and disable color when stdout is not a TTY.
+if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
+  C_RESET='' C_DIM='' C_GREEN='' C_YELLOW='' C_RED='' C_CYAN=''
+else
+  C_RESET=$(printf '\033[0m')
+  C_DIM=$(printf '\033[2m')
+  C_GREEN=$(printf '\033[32m')
+  C_YELLOW=$(printf '\033[33m')
+  C_RED=$(printf '\033[31m')
+  C_CYAN=$(printf '\033[36m')
+fi
+
+# tag <color> <TAG> <message>  -- aligned, colorized status line.
+tag() {
+  _c=$1
+  _t=$2
+  shift 2
+  printf '%s%-9s%s%s\n' "$_c" "$_t" "$C_RESET" "$*"
+}
+report_new() { tag "$C_GREEN" NEW "$1"; }
+report_update() { tag "$C_YELLOW" UPDATE "$1"; }
+report_ok() { tag "$C_DIM" OK "$1"; }
+report_skip() { tag "$C_YELLOW" SKIP "$1"; }
+report_conflict() { tag "$C_RED" CONFLICT "$1"; }
+report_backup() { tag "$C_DIM" BACKUP "$1"; }
+report_removed() { tag "$C_GREEN" REMOVED "$1"; }
+report_kept() { tag "$C_YELLOW" KEPT "$1"; }
+report_would() { tag "$C_CYAN" WOULD "$1"; }
+
 info() { printf '  %s\n' "$1"; }
-ok() { printf 'OK    %s\n' "$1"; }
-warn() { printf 'WARN  %s\n' "$1" >&2; }
-skip() { printf 'SKIP  %s\n' "$1"; }
-act() { printf 'DO    %s\n' "$1"; }
+ok() { tag "$C_GREEN" OK "$1"; }
+warn() { tag "$C_RED" WARN "$1" >&2; }
+
+# ---------------------------------------------------------------------------
+# Summary counters. These are plain variables mutated in the MAIN shell only.
+# The copy loop deliberately avoids `find | while` (which would run the loop
+# body in a SUBSHELL, discarding counter mutations); it redirects a temp file
+# into the loop instead (see deploy_subtree).
+# ---------------------------------------------------------------------------
+N_NEW=0
+N_UPDATE=0
+N_OK=0
+N_SKIP=0
+N_CONFLICT=0
+N_BACKUP=0
+N_REMOVED=0
+N_KEPT=0
 
 # ---------------------------------------------------------------------------
 # Platform detection (for dependency suggestions)
@@ -148,92 +273,336 @@ detect_platform() {
 PLATFORM=$(detect_platform)
 
 # ---------------------------------------------------------------------------
-# Linking core
+# Copy core
 # ---------------------------------------------------------------------------
-# link_one <source> <dest>
-# Creates a symlink dest -> source with full collision safety and idempotency.
-link_one() {
+# is_excluded <relpath>  -- return 0 if <relpath> matches any EXCLUDES glob.
+is_excluded() {
+  _rel=$1
+  # Iterate the newline-separated globs. `case` does glob matching.
+  _oldifs=$IFS
+  IFS='
+'
+  for _glob in $EXCLUDES; do
+    [ -n "$_glob" ] || continue
+    # shellcheck disable=SC2254  # $_glob is intentionally a glob pattern here.
+    case $_rel in
+      $_glob)
+        IFS=$_oldifs
+        return 0
+        ;;
+    esac
+  done
+  IFS=$_oldifs
+  return 1
+}
+
+# backup_dest <dest>  -- copy an existing dest aside to dest.bak.<epoch>.
+# Never clobbers a prior backup (epoch-timestamped). Honors DRY_RUN.
+backup_dest() {
+  _dest=$1
+  _bak="$_dest.bak.$(date +%s)"
+  # In the extremely unlikely event of a same-second collision, bump until free.
+  while [ -e "$_bak" ]; do
+    _bak="$_bak.1"
+  done
+  if [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  cp -p "$_dest" "$_bak"
+  N_BACKUP=$((N_BACKUP + 1))
+  report_backup "$_dest -> $_bak"
+}
+
+# do_copy <src> <dest>  -- mkdir -p parent, copy preserving mode. Honors DRY_RUN.
+do_copy() {
+  _src=$1
+  _dest=$2
+  if [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  _parent=$(dirname "$_dest")
+  [ -d "$_parent" ] || mkdir -p "$_parent"
+  # -p preserves mode/timestamps so executable scripts stay executable.
+  cp -p "$_src" "$_dest"
+}
+
+# prompt_conflict <src> <dest>
+# Prompts the user (reading from /dev/tty) how to resolve a differing file.
+# Echoes one of: overwrite | skip | quit  on stdout.
+# Re-prompts after showing a diff ("d"). Sets OVERWRITE_ALL on "a".
+prompt_conflict() {
+  _src=$1
+  _dest=$2
+  while :; do
+    # Prompt to /dev/tty so it is visible even if stdout is redirected; read the
+    # answer from /dev/tty so it works even when stdin is piped.
+    printf '%sfile %s differs. [o]verwrite / [s]kip / [d]iff / [a]ll-overwrite / [q]uit ?%s ' \
+      "$C_YELLOW" "$_dest" "$C_RESET" >/dev/tty
+    if ! IFS= read -r _ans </dev/tty; then
+      # EOF on the tty -- treat as skip to avoid clobbering.
+      echo skip
+      return 0
+    fi
+    case $_ans in
+      o | O) echo overwrite; return 0 ;;
+      s | S | '') echo skip; return 0 ;;
+      q | Q) echo quit; return 0 ;;
+      a | A)
+        OVERWRITE_ALL=1
+        echo overwrite
+        return 0
+        ;;
+      d | D)
+        printf '%s--- diff (%s vs %s): ---%s\n' "$C_DIM" "$_dest" "$_src" "$C_RESET" >/dev/tty
+        # Unified diff, existing dest vs repo source. Never fatal under set -e.
+        diff -u "$_dest" "$_src" >/dev/tty 2>&1 || true
+        # loop and re-prompt the same file.
+        ;;
+      *)
+        printf 'please answer o, s, d, a, or q.\n' >/dev/tty
+        ;;
+    esac
+  done
+}
+
+# copy_one <src> <dest>  -- the heart. Deploys one file with full conflict,
+# backup, idempotency, dry-run, force, and interactive handling. Mutates the
+# summary counters in the current shell (callers must NOT pipe into this).
+copy_one() {
   src=$1
   dest=$2
 
   if [ ! -e "$src" ]; then
-    warn "source missing, cannot link: $src"
-    return 1
-  fi
-
-  # Already a symlink?
-  if [ -h "$dest" ]; then
-    current=$(readlink "$dest")
-    # Normalize the current target to an absolute path for comparison.
-    case $current in
-      /*) current_abs=$current ;;
-      *) current_abs=$(cd "$(dirname "$dest")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current") ;;
-    esac
-    if [ "$current_abs" = "$src" ] || [ "$current" = "$src" ]; then
-      skip "$dest already links to $src"
-      return 0
-    fi
-    warn "$dest is a symlink to '$current' (not our target)."
-    warn "  remediation: inspect it, then remove with: rm '$dest'  and re-run."
-    return 1
-  fi
-
-  # A regular file or directory occupies the destination.
-  if [ -e "$dest" ]; then
-    if [ -d "$dest" ]; then
-      warn "$dest is an existing directory; refusing to replace it."
-    else
-      warn "$dest is an existing file; refusing to overwrite it."
-    fi
-    warn "  remediation: back it up and remove it yourself, then re-run:"
-    warn "    mv '$dest' '$dest.bak' && sh install.sh"
-    return 1
-  fi
-
-  # Clear to create. Ensure the parent directory exists.
-  parent=$(dirname "$dest")
-  if [ "$DRY_RUN" -eq 1 ]; then
-    if [ ! -d "$parent" ]; then
-      act "mkdir -p $parent"
-    fi
-    act "ln -s $src $dest"
+    warn "source missing, cannot copy: $src"
     return 0
   fi
 
-  [ -d "$parent" ] || mkdir -p "$parent"
-  ln -s "$src" "$dest"
-  ok "linked $dest -> $src"
+  # New file.
+  if [ ! -e "$dest" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      report_new "$dest (would create)"
+    else
+      do_copy "$src" "$dest"
+      report_new "$dest"
+    fi
+    N_NEW=$((N_NEW + 1))
+    return 0
+  fi
+
+  # Exists and identical -> nothing to do.
+  if cmp -s "$src" "$dest"; then
+    report_ok "$dest"
+    N_OK=$((N_OK + 1))
+    return 0
+  fi
+
+  # Exists and DIFFERS -> conflict.
+  N_CONFLICT=$((N_CONFLICT + 1))
+
+  # Dry run: report the conflict, make no changes, do not prompt.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    report_conflict "$dest differs (would prompt)"
+    return 0
+  fi
+
+  # Force, or a prior "all-overwrite": overwrite (with backup), no prompt.
+  if [ "$FORCE" -eq 1 ] || [ "$OVERWRITE_ALL" -eq 1 ]; then
+    report_conflict "$dest differs"
+    backup_dest "$dest"
+    do_copy "$src" "$dest"
+    report_update "$dest"
+    N_UPDATE=$((N_UPDATE + 1))
+    return 0
+  fi
+
+  # Interactive path: only if we could actually open a controlling terminal.
+  if [ "$HAVE_TTY" -eq 1 ]; then
+    report_conflict "$dest differs"
+    _decision=$(prompt_conflict "$src" "$dest")
+    case $_decision in
+      overwrite)
+        backup_dest "$dest"
+        do_copy "$src" "$dest"
+        report_update "$dest"
+        N_UPDATE=$((N_UPDATE + 1))
+        ;;
+      skip)
+        report_skip "$dest (kept your version)"
+        N_SKIP=$((N_SKIP + 1))
+        ;;
+      quit)
+        printf '\n%saborted by user.%s\n' "$C_YELLOW" "$C_RESET" >&2
+        print_summary
+        exit 130
+        ;;
+    esac
+    return 0
+  fi
+
+  # Non-interactive, not forced: never clobber silently -- skip + warn.
+  report_conflict "$dest differs"
+  warn "not a TTY and no --force: leaving $dest untouched (use --force to overwrite)."
+  N_SKIP=$((N_SKIP + 1))
+  return 0
 }
 
-# unlink_one <source> <dest>
-# Removes dest ONLY if it is a symlink pointing at source. Never deletes files.
-unlink_one() {
+# deploy_subtree <src-root> <dest-root>
+# Recursively copies every file under <src-root> (minus EXCLUDES) to the
+# mirrored path under <dest-root>. Uses a temp file, NOT a pipe, so copy_one's
+# counter mutations survive in this shell (a `find | while` loop runs in a
+# subshell and would discard them).
+deploy_subtree() {
+  _srcroot=$1
+  _destroot=$2
+
+  _tmplist=$(mktemp "${TMPDIR:-/tmp}/dotfiles-install.XXXXXX") || {
+    warn "could not create temp file; skipping $_srcroot"
+    return 0
+  }
+  # Enumerate regular files. `|| true` so an empty/odd tree never aborts set -e.
+  find "$_srcroot" -type f >"$_tmplist" 2>/dev/null || true
+
+  while IFS= read -r _srcfile; do
+    [ -n "$_srcfile" ] || continue
+    # Path relative to the subtree root (strip "<root>/").
+    _rel=${_srcfile#"$_srcroot"/}
+    if is_excluded "$_rel"; then
+      continue
+    fi
+    copy_one "$_srcfile" "$_destroot/$_rel"
+  done <"$_tmplist"
+
+  rm -f "$_tmplist"
+}
+
+# deploy_entry <src> <dest>  -- dispatch a manifest entry: subtree if src is a
+# directory, else a single file.
+deploy_entry() {
+  _src=$1
+  _dest=$2
+  if [ -d "$_src" ]; then
+    deploy_subtree "$_src" "$_dest"
+  else
+    copy_one "$_src" "$_dest"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Uninstall core
+# ---------------------------------------------------------------------------
+# remove_one <src> <dest>
+# Removes dest ONLY if it is byte-identical to src (unchanged since deploy).
+# A differing file is KEPT. A missing dest is a silent no-op. Honors DRY_RUN.
+# Records the parent dir of any removal in $PRUNE_DIRS for later empty-dir prune.
+PRUNE_DIRS=""
+remove_one() {
   src=$1
   dest=$2
 
-  if [ ! -h "$dest" ]; then
-    if [ -e "$dest" ]; then
-      skip "$dest is not our symlink; leaving it untouched."
-    else
-      skip "$dest does not exist."
-    fi
+  if [ ! -e "$dest" ]; then
     return 0
   fi
 
-  current=$(readlink "$dest")
-  case $current in
-    /*) current_abs=$current ;;
-    *) current_abs=$(cd "$(dirname "$dest")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current") ;;
-  esac
-  if [ "$current_abs" = "$src" ] || [ "$current" = "$src" ]; then
+  if [ ! -e "$src" ]; then
+    # No source to compare against -> cannot prove it is an unchanged copy.
+    report_kept "$dest (no repo source to compare; leaving it)"
+    N_KEPT=$((N_KEPT + 1))
+    return 0
+  fi
+
+  if cmp -s "$src" "$dest"; then
     if [ "$DRY_RUN" -eq 1 ]; then
-      act "rm $dest  (symlink -> $src)"
+      report_removed "$dest (would remove)"
     else
-      rm "$dest"
-      ok "removed symlink $dest"
+      rm -f "$dest"
+      report_removed "$dest"
+      PRUNE_DIRS="$PRUNE_DIRS
+$(dirname "$dest")"
     fi
+    N_REMOVED=$((N_REMOVED + 1))
   else
-    skip "$dest is a symlink to '$current' (not ours); leaving it untouched."
+    report_kept "$dest (modified)"
+    N_KEPT=$((N_KEPT + 1))
+  fi
+}
+
+# uninstall_subtree <src-root> <dest-root>  -- mirror of deploy_subtree.
+uninstall_subtree() {
+  _srcroot=$1
+  _destroot=$2
+
+  _tmplist=$(mktemp "${TMPDIR:-/tmp}/dotfiles-uninstall.XXXXXX") || {
+    warn "could not create temp file; skipping $_srcroot"
+    return 0
+  }
+  find "$_srcroot" -type f >"$_tmplist" 2>/dev/null || true
+
+  while IFS= read -r _srcfile; do
+    [ -n "$_srcfile" ] || continue
+    _rel=${_srcfile#"$_srcroot"/}
+    if is_excluded "$_rel"; then
+      continue
+    fi
+    remove_one "$_srcfile" "$_destroot/$_rel"
+  done <"$_tmplist"
+
+  rm -f "$_tmplist"
+}
+
+uninstall_entry() {
+  _src=$1
+  _dest=$2
+  if [ -d "$_src" ]; then
+    uninstall_subtree "$_src" "$_dest"
+  else
+    remove_one "$_src" "$_dest"
+  fi
+}
+
+# prune_empty_dirs  -- rmdir (only-if-empty) the dirs that held removed files,
+# walking upward toward the config roots. Never recursive, never forced; a
+# non-empty dir (holds generated/user files) simply stops the walk. Skips the
+# top-level config roots themselves.
+prune_empty_dirs() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  # Roots we must never rmdir even if momentarily empty.
+  _roots="$XDG_CONFIG_HOME
+$HOME"
+  # De-dup and process each recorded dir, walking up.
+  _oldifs=$IFS
+  IFS='
+'
+  for _d in $PRUNE_DIRS; do
+    [ -n "$_d" ] || continue
+    _cur=$_d
+    while [ -d "$_cur" ]; do
+      # Stop at a protected root.
+      _is_root=0
+      for _r in $_roots; do
+        [ "$_cur" = "$_r" ] && _is_root=1
+      done
+      [ "$_is_root" -eq 1 ] && break
+      # Only remove if empty. rmdir fails (non-fatally) on a non-empty dir.
+      if rmdir "$_cur" 2>/dev/null; then
+        _cur=$(dirname "$_cur")
+      else
+        break
+      fi
+    done
+  done
+  IFS=$_oldifs
+}
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+print_summary() {
+  printf '\n%sSummary:%s\n' "$C_CYAN" "$C_RESET"
+  if [ "$UNINSTALL" -eq 1 ]; then
+    printf '  removed: %s   kept(modified): %s\n' "$N_REMOVED" "$N_KEPT"
+  else
+    printf '  new: %s   updated: %s   unchanged: %s   skipped: %s   conflicts: %s   backups: %s\n' \
+      "$N_NEW" "$N_UPDATE" "$N_OK" "$N_SKIP" "$N_CONFLICT" "$N_BACKUP"
   fi
 }
 
@@ -520,36 +889,47 @@ main() {
   fi
 
   if [ "$UNINSTALL" -eq 1 ]; then
-    printf 'Uninstalling dotfile symlinks:\n'
-    rc=0
-    unlink_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
-    unlink_one "$TMUX_CONF_SRC" "$TMUX_CONF_DEST" || rc=1
-    unlink_one "$TMUX_DIR_SRC" "$TMUX_DIR_DEST" || rc=1
-    unlink_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
-    unlink_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
-    unlink_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
-    unlink_one "$THEMES_SRC" "$THEMES_DEST" || rc=1
-    exit "$rc"
+    printf 'Uninstalling dotfiles (removing only unchanged copies):\n'
+    info "repo dotfiles dir: $SCRIPT_DIR"
+    # Iterate the manifest.
+    _oldifs=$IFS
+    IFS='
+'
+    for _entry in $MANIFEST; do
+      [ -n "$_entry" ] || continue
+      _src=${_entry%%|*}
+      _dest=${_entry#*|}
+      uninstall_entry "$_src" "$_dest"
+    done
+    IFS=$_oldifs
+    prune_empty_dirs
+    print_summary
+    exit 0
   fi
 
-  printf 'Installing dotfile symlinks:\n'
+  printf 'Installing dotfiles (copy model):\n'
   info "repo dotfiles dir: $SCRIPT_DIR"
-  rc=0
-  link_one "$WEZTERM_SRC" "$WEZTERM_DEST" || rc=1
-  # Whole tmux dir (so sibling scripts/ + themes/ resolve) plus the ~/.tmux.conf
-  # compat shim pointing straight at the repo file. Independent links.
-  link_one "$TMUX_DIR_SRC" "$TMUX_DIR_DEST" || rc=1
-  link_one "$TMUX_CONF_SRC" "$TMUX_CONF_DEST" || rc=1
-  link_one "$OC_PLUGIN_SRC" "$OC_PLUGIN_DEST" || rc=1
-  link_one "$ZSH_SRC" "$ZSH_DEST" || rc=1
-  link_one "$NVIM_SRC" "$NVIM_DEST" || rc=1
-  link_one "$THEMES_SRC" "$THEMES_DEST" || rc=1
+  if [ "$FORCE" -eq 1 ]; then
+    info "--force: conflicts will be overwritten (after backup)."
+  fi
+
+  # Deploy every manifest entry.
+  _oldifs=$IFS
+  IFS='
+'
+  for _entry in $MANIFEST; do
+    [ -n "$_entry" ] || continue
+    _src=${_entry%%|*}
+    _dest=${_entry#*|}
+    deploy_entry "$_src" "$_dest"
+  done
+  IFS=$_oldifs
 
   # Render the active theme's color adapters so wezterm/tmux/nvim have
   # something to source. Advisory + non-fatal: requires jq, and a failure here
-  # must never abort an otherwise-successful symlink install under `set -e`.
+  # must never abort an otherwise-successful install under `set -e`.
   if [ "$DRY_RUN" -eq 1 ]; then
-    act "run render.sh --all (generate theme color adapters)"
+    report_would "run render.sh --all (generate theme color adapters)"
   elif command -v jq >/dev/null 2>&1; then
     if (cd "$THEMES_SRC" && sh render.sh --all >/dev/null 2>&1); then
       ok "rendered theme adapters (active: $(cat "$THEMES_SRC/active" 2>/dev/null || echo '?'))"
@@ -566,19 +946,16 @@ main() {
   check_deps || true
   check_lsp_servers || true
 
-  if [ "$rc" -ne 0 ]; then
-    printf '\nFinished with warnings. See messages above for remediation.\n' >&2
-  else
-    printf '\nDone.\n'
-    printf '\nTo activate the zsh fragment, add this ONE line to your ~/.zshrc\n'
-    printf '(this installer does NOT edit ~/.zshrc for you):\n'
-    # The parameter expansion below is printed LITERALLY for the user to paste
-    # into their own ~/.zshrc; it must not be expanded here.
-    # shellcheck disable=SC2016
-    printf '  source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"\n'
-    printf 'Then reload with: exec zsh\n'
-  fi
-  exit "$rc"
+  print_summary
+
+  printf '\n%sDone.%s\n' "$C_GREEN" "$C_RESET"
+  printf '\nTo activate the zsh fragment, add this ONE line to your ~/.zshrc\n'
+  printf '(this installer does NOT edit ~/.zshrc for you):\n'
+  # The parameter expansion below is printed LITERALLY for the user to paste
+  # into their own ~/.zshrc; it must not be expanded here.
+  # shellcheck disable=SC2016
+  printf '  source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/interactive.zsh"\n'
+  printf 'Then reload with: exec zsh\n'
 }
 
 main
