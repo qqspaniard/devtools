@@ -56,5 +56,9 @@ render_glyph() {
   local n="${#frames[@]}"
   (( n == 0 )) && return 0
   glyph="${frames[$(( frame % n ))]}"
-  printf '#[fg=%s]%s#[default]' "$color" "$glyph"
+  # Reset only the FOREGROUND after the glyph (#[fg=default]), NOT the full
+  # #[default] -- the glyph is rendered INSIDE a window-status tab that may carry
+  # its own background (e.g. the gold active tab). A full #[default] would clear
+  # that background for everything after the glyph, breaking the tab's highlight.
+  printf '#[fg=%s]%s#[fg=default]' "$color" "$glyph"
 }
