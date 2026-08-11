@@ -6,8 +6,8 @@ those configurations are added.
 
 The first included setup pairs [WezTerm](https://wezterm.org) as the GPU
 terminal emulator with [tmux](https://github.com/tmux/tmux) as the multiplexer.
-It targets macOS, Linux, and WSL, avoids plugins, and installs by symlinking the
-files in this repo into place.
+It targets macOS, Linux, and WSL, avoids plugins, and installs by copying the
+files in this repo into real directories under `~/.config`.
 
 Alongside it is an optional, framework-free **zsh interactive fragment**
 (`zsh/interactive.zsh`) that layers native completion, fzf key-bindings, and two
@@ -26,14 +26,15 @@ optional zsh plugins onto your existing shell — without taking over your
 - **No plugins, no theme files, no TPM.** Everything uses built-in WezTerm and
   tmux features. See [Why no plugins](#why-plugins-are-deferred).
 - **Portable and non-destructive.** Paths are derived from the repo location;
-  the installer refuses to clobber existing files.
+  the installer copies files into real directories and never clobbers a file
+  you have edited without asking (or backing it up).
 
 ## Layout
 
 ```
 dotfiles/
 ├── README.md            # this file
-├── install.sh           # POSIX-sh symlink installer
+├── install.sh           # POSIX-sh copy installer (conflict-aware)
 ├── wezterm/
 │   ├── wezterm.lua      # entry point (config_builder + module composition)
 │   ├── appearance.lua   # scheme, font, opacity, macOS blur, tab bar
@@ -114,71 +115,88 @@ From anywhere:
 sh /path/to/dotfiles/install.sh
 ```
 
-This creates three symlinks:
+This **copies** the tracked files into real directories under `~/.config`
+(creating the directories, not symlinks):
 
-- `~/.config/wezterm` → `<repo>/dotfiles/wezterm` (the **whole directory**)
-- `~/.tmux.conf` → `<repo>/dotfiles/tmux/tmux.conf`
-- `~/.config/zsh` → `<repo>/dotfiles/zsh` (the **whole directory**)
+- `~/.config/wezterm/` ← `<repo>/dotfiles/wezterm/`
+- `~/.config/tmux/` ← `<repo>/dotfiles/tmux/` (incl. `scripts/`,
+  `themes/spaceflight/`)
+- `~/.config/nvim/` ← `<repo>/dotfiles/nvim/` (incl. `lua/`, `lsp/`)
+- `~/.config/zsh/` ← `<repo>/dotfiles/zsh/`
+- `~/.config/themes/` ← `<repo>/dotfiles/themes/` (excluding the generated
+  build output)
+- `~/.config/opencode/plugins/tmux-agent-state.ts` (the opencode-side half of
+  the tmux agent-status feature)
+- `~/.tmux.conf` (a single-file compat shim for tmux older than 3.1, which
+  only reads the classic path)
 
-**The installer does NOT edit your `~/.zshrc`.** Linking `~/.config/zsh` only
+Copying is deliberate. A directory **symlink** would pin your live config to a
+single checkout, so you could not deploy or test from a git worktree, and a
+generated theme file written into a tool's config dir would land inside the
+repo. With real directories, you can install from any checkout, and tracked
+files coexist with generated/untracked ones in the same dirs — the installer
+manages only the tracked files.
+
+Copies mirror the source structure, so nested modules (`nvim/lua/`, `nvim/lsp/`,
+`tmux/scripts/`) deploy automatically and adding a new tracked file needs no
+installer edit. File modes are preserved, so scripts and the opencode plugin
+stay executable.
+
+**The installer does NOT edit your `~/.zshrc`.** Copying `~/.config/zsh/` only
 puts the fragment in place; you activate it by adding one `source` line yourself
 (see [zsh interactive fragment](#zsh-interactive-fragment)). Your `~/.zshrc`
 stays entirely yours and untracked.
 
-**Why link the whole `wezterm` directory?** `wezterm.lua` is modular and
-`require`s its siblings (`appearance`, `keybindings`). Linking the entire
-directory in one atomic symlink guarantees those modules always resolve, in
-every install layout, and keeps a single link to reason about.
-
-**Why `~/.tmux.conf` and not `~/.config/tmux/tmux.conf`?** The classic path is
-understood by every tmux version, including releases older than 3.1 that do not
-read the XDG path. This maximizes portability.
-
-Because the links point back into the repo, editing files here takes effect
-immediately (restart WezTerm or reload tmux with `prefix r`).
+Because files are **copied**, editing a file back in the repo does not take
+effect until you re-run the installer (which will detect the change as a
+conflict — see below). Conversely, you can now edit a deployed file in place
+to experiment without dirtying the repo.
 
 ### Options
 
 ```sh
-sh install.sh --dry-run     # show what would happen; change nothing
-sh install.sh --uninstall   # remove ONLY the symlinks this installer created
+sh install.sh --dry-run     # show what would happen (NEW/UPDATE/OK/CONFLICT); change nothing
+sh install.sh --force       # overwrite conflicts without prompting (still backs up first)
+sh install.sh --uninstall   # remove ONLY unchanged copies; keep anything you edited
 sh install.sh --help        # usage
 ```
 
-## Safe collision behavior
+## Conflict handling
 
-The installer will **never** overwrite, back up, move, or delete your existing
-data. If a destination is already occupied by:
+Each file is compared to its repo source:
 
-- a **regular file** (e.g. an existing `~/.tmux.conf`),
-- a **directory** (e.g. an existing `~/.config/wezterm`), or
-- an **unrelated symlink** (pointing somewhere other than this repo),
+- **NEW** — the destination does not exist; it is created.
+- **OK** — the destination is byte-identical to the source; nothing to do. This
+  makes re-running **idempotent**: no prompts, no backups, no writes.
+- **CONFLICT** — the destination exists but **differs** from the source (you, or
+  something else, changed it). The installer never clobbers it silently:
+  - **Interactively** (a terminal is available) it prompts per file:
+    `[o]verwrite / [s]kip / [d]iff / [a]ll-overwrite / [q]uit`. `d` shows a
+    unified diff and re-asks; `a` overwrites this and all remaining conflicts;
+    `q` aborts cleanly.
+  - **Non-interactively** (piped, cron, CI) it **skips** the file and warns,
+    unless you pass `--force`.
 
-it prints a `WARN` with an exact remediation command and exits non-zero,
-leaving the destination untouched. Re-running after you resolve the collision
-is safe.
+Before **any** overwrite, the existing file is backed up to
+`<dest>.bak.<epoch>` (timestamped, never clobbering a prior backup). So `--force`
+is safe: it overwrites, but your previous version is always recoverable.
 
-If a link already points at the correct target, the installer reports `SKIP` —
-it is **idempotent**.
-
-## Uninstall / manual unlink
+## Uninstall
 
 ```sh
 sh install.sh --uninstall
 ```
 
-This removes a destination **only if** it is a symlink pointing back into this
-repo. Anything else is left alone.
+Because the deployed files are **real files you may have edited**, uninstall is
+conservative. For each managed file it removes the destination **only if** it is
+byte-identical to the current repo source (i.e. unchanged since deploy) —
+reported `REMOVED`. A file you have modified is left in place and reported
+`KEPT (modified)`. Files that are not in the manifest (generated themes, the
+`themes/generated/` build output, your own files) are **never** touched, and only
+directories left empty by removals are pruned — it never `rm -rf`s a config dir.
 
-To unlink manually:
-
-```sh
-rm ~/.config/wezterm     # only if it is the symlink created above
-rm ~/.tmux.conf          # only if it is the symlink created above
-rm ~/.config/zsh         # only if it is the symlink created above
-```
-
-(`rm` on a symlink removes the link, not the repo files it points to.)
+To remove things manually, delete the specific files or directories yourself;
+they are ordinary files, so `rm` behaves as expected.
 
 ## Platform notes
 
@@ -300,8 +318,9 @@ scripts.
 
 ### One-time setup
 
-1. Install the fragment link (once): `sh dotfiles/install.sh` creates
-   `~/.config/zsh` → `<repo>/dotfiles/zsh`. **This does not touch `~/.zshrc`.**
+1. Install the fragment (once): `sh dotfiles/install.sh` copies
+   `<repo>/dotfiles/zsh/` into `~/.config/zsh/`. **This does not touch
+   `~/.zshrc`.**
 2. Add exactly **one line** to your own `~/.zshrc` (you do this manually):
 
    ```sh
@@ -518,7 +537,7 @@ This first pass intentionally ships **no plugins** (no TPM, no external theme
 files, no focus-dimming machinery):
 
 - **Portability & reproducibility.** Zero external downloads means the setup
-  works identically the moment the symlinks exist, offline, on a fresh box.
+  works identically the moment the files are installed, offline, on a fresh box.
 - **Debuggability.** With only built-in features, unexpected behavior has a
   small, inspectable surface — you learn the tools, not a plugin stack.
 - **Stability.** Nothing here can break from an upstream plugin change.
