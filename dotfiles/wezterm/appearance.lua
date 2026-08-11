@@ -10,21 +10,24 @@ local M = {}
 -- Apply appearance settings onto an existing config table (built by
 -- wezterm.config_builder() in the entry point). Mutates and returns `config`.
 function M.apply(config)
-  -- Color scheme: use WezTerm's built-in Rose Pine Moon. No external theme
-  -- files are required, which keeps this config self-contained and portable.
-  config.color_scheme = 'rose-pine-moon'
-
-  -- The built-in rose-pine-moon scheme (verified against WezTerm
-  -- 20240203-110809-5046fc22) ships with selection_bg == background
-  -- (#232136), which makes selected text effectively invisible. Override
-  -- ONLY the selection colors with the canonical Rose Pine Moon "highlight"
-  -- overlay tone so selections are legible. Everything else is left to the
-  -- built-in scheme. If a future WezTerm fixes the built-in selection color,
-  -- this block can simply be removed.
-  config.colors = {
-    selection_fg = '#e0def4', -- rose-pine-moon text (unchanged, kept explicit)
-    selection_bg = '#44415a', -- rose-pine-moon "highlight med" overlay
-  }
+  -- Colors come from the theming system (dotfiles/themes/). render.sh generates
+  -- native wezterm color schemes into ~/.config/wezterm/colors/<name>-<mode>.toml
+  -- (one per palette+mode). WezTerm auto-scans ~/.config/wezterm/colors/*.toml
+  -- on POSIX systems and registers each scheme by its [metadata] name (which we
+  -- make equal the filename stem), so a generated scheme is selectable simply by
+  -- setting config.color_scheme below. User schemes override WezTerm's built-ins.
+  --
+  -- Switch themes by changing this scheme name (e.g. 'nebula-light',
+  -- 'rosepine-dark', or a locally-generated one) or via WezTerm's built-in scheme
+  -- picker. The committed default is nebula-dark. If the generated file is absent
+  -- (fresh checkout before install.sh runs render.sh), WezTerm warns and falls
+  -- back to its own defaults; run `sh dotfiles/themes/render.sh --all` to create
+  -- the schemes.
+  --
+  -- (Future: macOS light/dark auto-follow could pick '<name>-light' vs
+  -- '<name>-dark' via wezterm.gui.get_appearance(); kept out for now so this
+  -- stays simple and deterministic.)
+  config.color_scheme = 'nebula-dark'
 
   -- Font. The plan standardizes on Hack Nerd Font at size 15. WezTerm will
   -- fall back to a system monospace font (and its own bundled Nerd Font
