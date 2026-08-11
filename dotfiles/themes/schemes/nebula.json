@@ -1,0 +1,32 @@
+{
+  "system": "base24",
+  "name": "Nebula",
+  "slug": "nebula",
+  "variant": "dark",
+  "palette": {
+    "base00": "#0b0e17",
+    "base01": "#141828",
+    "base02": "#232a44",
+    "base03": "#5a6485",
+    "base04": "#8b95bd",
+    "base05": "#e8ecff",
+    "base06": "#e8ecff",
+    "base07": "#3a4266",
+    "base08": "#ff6b6b",
+    "base09": "#ffcf6a",
+    "base0A": "#ffcf6a",
+    "base0B": "#5ad19a",
+    "base0C": "#56d0c9",
+    "base0D": "#57c7ff",
+    "base0E": "#c084fc",
+    "base0F": "#ff8f8f",
+    "base10": "#080a12",
+    "base11": "#05070d",
+    "base12": "#ff8f8f",
+    "base13": "#ffdd94",
+    "base14": "#7fe0b3",
+    "base15": "#7ee0da",
+    "base16": "#8ad6ff",
+    "base17": "#d3a6ff"
+  }
+}

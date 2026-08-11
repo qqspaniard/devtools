@@ -9,10 +9,10 @@
 --
 -- Switch themes by changing the name below (e.g. 'nebula-light',
 -- 'rosepine-dark', or a locally-generated one). The committed default is
--- nebula-dark. The colorscheme call is guarded with pcall so a missing scheme
+-- rose-pine-moon. The colorscheme call is guarded with pcall so a missing scheme
 -- (fresh checkout before install.sh runs render.sh) never breaks startup: on
 -- failure we keep truecolor on and leave nvim's defaults in place. Run
 -- `sh dotfiles/themes/render.sh --all` to generate the colorschemes.
 vim.o.termguicolors = true
 
-pcall(vim.cmd.colorscheme, "nebula-dark")
+pcall(vim.cmd.colorscheme, "rose-pine-moon")

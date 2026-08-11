@@ -1,0 +1,32 @@
+{
+  "system": "base24",
+  "name": "Nebula Dawn",
+  "slug": "nebula-dawn",
+  "variant": "light",
+  "palette": {
+    "base00": "#f4f6ff",
+    "base01": "#e8ecfb",
+    "base02": "#d6dcf2",
+    "base03": "#7a83a8",
+    "base04": "#4b5578",
+    "base05": "#1a1f3a",
+    "base06": "#1a1f3a",
+    "base07": "#c3ccec",
+    "base08": "#d63a4f",
+    "base09": "#b8730a",
+    "base0A": "#b8730a",
+    "base0B": "#1e9e6a",
+    "base0C": "#0f8f96",
+    "base0D": "#1667c9",
+    "base0E": "#8a3fd1",
+    "base0F": "#c25563",
+    "base10": "#ffffff",
+    "base11": "#dfe4f7",
+    "base12": "#c25563",
+    "base13": "#a7690a",
+    "base14": "#178a5c",
+    "base15": "#0d7d84",
+    "base16": "#155bb0",
+    "base17": "#7a36bb"
+  }
+}
