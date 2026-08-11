@@ -62,6 +62,13 @@ function M.apply(config)
   -- default gap. 20px all sides is a comfortable breathing margin.
   config.window_padding = { left = 20, right = 20, top = 20, bottom = 20 }
 
+  -- Center the terminal cell grid within the window. When the usable pixel size
+  -- isn't an exact multiple of the cell size, the leftover sub-cell pixels would
+  -- otherwise all pile onto the right/bottom edges, making padding look
+  -- asymmetric. Centering splits that remainder evenly across both edges.
+  -- (Requires a wezterm nightly >= ~2025-02; not in the 20240203 stable.)
+  config.window_content_alignment = { horizontal = "Center", vertical = "Center" }
+
   return config
 end
 
