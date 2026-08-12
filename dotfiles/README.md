@@ -43,7 +43,7 @@ dotfiles/
 │   └── tmux.conf        # prefix, splits, navigation, clipboard, status bar
 ├── nvim/                # portable Neovim config (options, lsp, statusline, …)
 ├── themes/              # color themes (see "Themes" below)
-│   ├── palettes/       # <name>.json — the source of truth (light + dark)
+│   ├── schemes/        # <slug>.json — base24 schemes (one variant each)
 │   └── render.sh       # generates native theme files into each tool's own dir
 └── zsh/
     └── interactive.zsh  # optional: completion + fzf + autosuggestions +
@@ -52,67 +52,84 @@ dotfiles/
 
 ## Themes
 
-WezTerm, Neovim, and opencode share color palettes. The model is **native
-tool theme dirs**: `render.sh` transpiles a palette into each tool's *own*
-native theme format and drops it in that tool's *own* theme-discovery directory,
-so each tool switches themes natively — no central controller, no "active" file,
-no indirection. Two public palettes ship, each with a **light** and **dark**
-mode:
+WezTerm, Neovim, and opencode share color schemes in the **base24** format
+([tinted-theming's](https://github.com/tinted-theming) 24-slot standard). The
+model is **native tool theme dirs**: `render.sh` transpiles a base24 scheme into
+each tool's *own* native theme format and drops it in that tool's *own*
+theme-discovery directory, so each tool switches themes natively — no central
+controller, no "active" file, no indirection. Two public themes ship, each as a
+**dark** and **light** scheme:
 
-| Theme | Look |
-|-------|------|
-| `nebula` | deep-space blue-violet with nebula-cyan / plasma-violet accents |
-| `rosepine` | Rose Pine (Moon dark / Dawn light) |
+| Scheme (slug) | Look |
+|---------------|------|
+| `rose-pine-moon` / `rose-pine-dawn` | Rosé Pine (Moon = dark, Dawn = light) |
+| `nebula` / `nebula-dawn` | deep-space blue-violet; `-dawn` is the light variant |
 
-tmux is **not** part of the palette render: its status bar is styled natively
-and inline in `tmux.conf` (it dissolves into the terminal via `bg=default`), so
-there is no generated tmux theme file.
+tmux is **not** part of the render: its status bar is styled natively and inline
+in `tmux.conf` (it dissolves into the terminal via `bg=default`), so there is no
+generated tmux theme file. Whether to adopt `tinty` for unified switching is a
+parked decision — the full analysis lives in the memory store
+(`theme-switching-tinty-deferred.md`), not here.
+
+### base24 schemes
+
+A **scheme** (`themes/schemes/<slug>.json`) is the single source of truth. It's
+a standard base24 file — one variant (dark OR light) with a 24-slot palette
+`base00`–`base17` (see the slot semantics in `render.sh`'s header):
+
+```json
+{ "system": "base24", "name": "Rosé Pine Moon", "slug": "rose-pine-moon",
+  "variant": "dark", "palette": { "base00": "#232136", … "base17": "#ea9a97" } }
+```
+
+A dark+light theme is **two** scheme files (e.g. `rose-pine-moon` +
+`rose-pine-dawn`), which the renderer pairs for opencode's single dark+light
+theme file. Because it's the base24 standard, any of the ~250 community base24
+schemes can be dropped into `schemes/` and rendered as-is.
 
 ### Generating
 
 ```sh
-~/.config/themes/render.sh <name>        # a baked-in palette: nebula, rosepine
-~/.config/themes/render.sh /path/pal.json # any palette .json (local/third-party)
-~/.config/themes/render.sh --all         # every baked-in palette
+~/.config/themes/render.sh <slug>          # a baked-in scheme: rose-pine-moon, nebula, …
+~/.config/themes/render.sh /path/scheme.json  # any base24 scheme (local/third-party)
+~/.config/themes/render.sh --all           # every baked-in scheme
 ```
 
-`render.sh` writes native theme files into each tool's own directory:
+`render.sh` maps the 24 slots into each tool's native format and directory:
 
-- WezTerm → `~/.config/wezterm/colors/<name>-<mode>.toml` (auto-scanned; each
-  registered by its `[metadata] name`)
-- Neovim → `~/.config/nvim/colors/<name>-<mode>.lua` (loadable via
-  `:colorscheme <name>-<mode>`)
-- opencode → `~/.config/opencode/themes/<name>.json` (one file, both modes)
+- WezTerm → `~/.config/wezterm/colors/<slug>.toml` (auto-scanned; registered by
+  its `[metadata] name`; the slug encodes the variant)
+- Neovim → `~/.config/nvim/colors/<slug>.lua` (loadable via `:colorscheme <slug>`)
+- opencode → `~/.config/opencode/themes/<slug>.json` (dark+light in one file,
+  paired from the `<slug>` + `<slug>-dawn`/`-light` siblings). Backgrounds use the
+  layered model: `background` inherits the terminal (`"none"`), panels/elements
+  use `base01`/`base02`, foregrounds are palette hex.
 
 `install.sh` runs `render.sh --all` after copying, so the public themes exist in
-place (needs `jq`).
+place (needs `jq`). If a generated file is missing, each tool falls back to a
+sane built-in so nothing breaks.
 
 ### Switching
 
 Each tool switches natively — no shared switcher:
 
-- **WezTerm**: set `config.color_scheme = '<name>-<mode>'` in
-  `wezterm/appearance.lua`, or use WezTerm's built-in scheme picker.
-- **Neovim**: `:colorscheme <name>-<mode>` (the committed default is set in
+- **WezTerm**: set `config.color_scheme = '<slug>'` in `wezterm/appearance.lua`
+  (`color_scheme_dirs` is set there too — required so the generated schemes are
+  discovered), or use WezTerm's built-in scheme picker.
+- **Neovim**: `:colorscheme <slug>` (the committed default is set in
   `nvim/lua/colorscheme.lua`).
-- **opencode**: set the theme in opencode's config; it follows its own
+- **opencode**: set `"theme": "<slug>"` in opencode's config; it follows its own
   light/dark setting from the one JSON.
 
-The committed default across the tools is `nebula-dark`.
+The committed default across the tools is `rose-pine-moon`.
 
-### Palettes
+### Local / private schemes
 
-The **palette** (`themes/palettes/<name>.json`) is the single source of truth:
-semantic roles (bg, fg, accent, …) plus a 16-color ANSI set and agent-state
-colors, defined for both modes. Edit a palette and re-run `render.sh <name>` (or
-`--all`) to regenerate. If a tool's generated file is missing (fresh checkout
-before `install.sh` runs `render.sh`), each tool falls back to a sane built-in
-so nothing breaks.
-
-Local or third-party palettes (e.g. a private brand palette you do NOT want in
-this repo) live outside the repo — drop them in `~/.config/themes/palettes/` and
-generate with `render.sh ~/.config/themes/palettes/<name>.json`. The installer
-renders only the baked-in public palettes, never local ones.
+Local or third-party schemes (e.g. a private brand scheme you do NOT want in this
+public repo) live **outside** the repo — drop them in `~/.config/themes/schemes/`
+and generate with `render.sh ~/.config/themes/schemes/<slug>.json`. The installer
+renders only the baked-in public schemes, never local ones, so a private scheme
+never enters git history.
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
@@ -145,7 +162,7 @@ This **copies** the tracked files into real directories under `~/.config`
 - `~/.config/nvim/` ← `<repo>/dotfiles/nvim/` (incl. `lua/`, `lsp/`)
 - `~/.config/zsh/` ← `<repo>/dotfiles/zsh/`
 - `~/.config/themes/` ← `<repo>/dotfiles/themes/` (`render.sh` + public
-  `palettes/`; the generated theme files land in each tool's own dir)
+  `schemes/`; the generated theme files land in each tool's own dir)
 - `~/.config/opencode/plugins/tmux-agent-state.ts` (the opencode-side half of
   the tmux agent-status feature)
 - `~/.tmux.conf` (a single-file compat shim for tmux older than 3.1, which
