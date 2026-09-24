@@ -47,20 +47,48 @@ _zi_debug() {
 # ---------------------------------------------------------------------------
 # If completion is already set up (e.g. Oh My Zsh, Prezto, or a prior compinit
 # in this same shell), the `compdef` function exists. Re-running compinit then
-# is wasted work, so we skip it. Otherwise autoload and initialize.
+# is wasted work, so we skip it. Otherwise use a stable dump and perform the
+# security audit at most once per 24 hours. The audit marker is refreshed only
+# after a successful normal compinit; `-C` is never used without that proof.
 if (( $+functions[compdef] )); then
   _zi_debug "completion already initialized (compdef present); skipping compinit"
 else
-  autoload -Uz compinit && compinit
-  _zi_debug "ran compinit"
+  autoload -Uz compinit
+  zmodload zsh/datetime 2>/dev/null
+  zmodload zsh/stat 2>/dev/null
+
+  _zi_cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
+  _zi_compdump=$_zi_cache_dir/zcompdump
+  _zi_compaudit_marker=$_zi_cache_dir/compaudit-ok
+  mkdir -p "$_zi_cache_dir"
+
+  _zi_recent_audit=0
+  if [[ -r $_zi_compdump && -e $_zi_compaudit_marker ]] \
+    && zstat -A _zi_marker_mtime +mtime -- "$_zi_compaudit_marker" 2>/dev/null \
+    && (( EPOCHSECONDS >= _zi_marker_mtime[1] \
+      && EPOCHSECONDS - _zi_marker_mtime[1] < 86400 )); then
+    _zi_recent_audit=1
+  fi
+
+  if (( _zi_recent_audit )); then
+    compinit -C -d "$_zi_compdump"
+    _zi_debug "ran compinit from $_zi_compdump (recent security audit)"
+  elif compinit -d "$_zi_compdump"; then
+    : >| "$_zi_compaudit_marker"
+    _zi_debug "ran compinit with security audit and refreshed marker"
+  else
+    _zi_debug "compinit failed; security-audit marker was not refreshed"
+  fi
+
+  unset _zi_cache_dir _zi_compdump _zi_compaudit_marker _zi_recent_audit
+  unset _zi_marker_mtime
 fi
 
 # ---------------------------------------------------------------------------
 # 2. fzf integration.
 # ---------------------------------------------------------------------------
 # Modern fzf (>= 0.48) prints its zsh key-bindings + completion via
-# `fzf --zsh`. Older fzf lacks this flag; we detect support and skip silently
-# if unavailable, so no startup error is emitted on old versions.
+# `fzf --zsh`. Invoke it exactly once and source the generated integration.
 #
 # NOTE: if your ~/.zshrc already does `source <(fzf --zsh)` (or the legacy
 # ~/.fzf.zsh), remove/comment that line before sourcing this fragment to avoid
@@ -70,36 +98,32 @@ if [[ -z ${ZI_FZF_LOADED:-} ]] && command -v fzf >/dev/null 2>&1; then
   if (( $+functions[fzf-history-widget] )); then
     _zi_debug "fzf widgets already present; skipping fzf --zsh"
     ZI_FZF_LOADED=1
-  elif fzf --zsh >/dev/null 2>&1; then
-    source <(fzf --zsh)
+  else
+    source <(fzf --zsh 2>/dev/null) 2>/dev/null
     ZI_FZF_LOADED=1
     _zi_debug "sourced fzf --zsh"
-  else
-    _zi_debug "fzf found but 'fzf --zsh' unsupported; skipping"
   fi
 fi
 
 # ---------------------------------------------------------------------------
 # Plugin path discovery helper.
 # ---------------------------------------------------------------------------
-# Resolves the source file for an optional plugin without hard-coding a
-# Homebrew prefix. Search order:
+# Resolves the source file for an optional plugin without running Homebrew on
+# the normal startup path. Search order:
 #   1. An explicit override variable (e.g. $ZSH_AUTOSUGGEST_DIR), if the file
 #      is readable there. This is the escape hatch for unusual layouts.
-#   2. `brew --prefix <formula>` -- works for Apple Silicon (/opt/homebrew),
-#      Intel macOS (/usr/local), and Linuxbrew (/home/linuxbrew/...) without
-#      assuming any specific prefix. IMPORTANT: `brew --prefix <formula>` prints
-#      a path and exits 0 even when the formula is NOT installed, so we must
-#      verify the resulting file is actually readable rather than trust exit
-#      status.
-#   3. A list of common distro / manual install locations.
+#   2. Stable Homebrew `opt` symlinks under $HOMEBREW_PREFIX and the standard
+#      Apple Silicon, Intel macOS, and Linuxbrew prefixes.
+#   3. Common distro / manual install locations.
+#   4. A cached prior Homebrew result, then `brew --prefix` only on a cache miss
+#      or when the cached path is no longer readable.
 # Prints the first readable candidate and returns 0; returns 1 if none found.
 #
 # Args: <override-dir> <brew-formula> <relative-file> [extra candidate dirs...]
 _zi_find_plugin() {
   local override_dir=$1 formula=$2 relfile=$3
   shift 3
-  local candidate
+  local candidate prefix plugin_file
 
   # 1. Explicit override directory.
   if [[ -n $override_dir && -r $override_dir/$relfile ]]; then
@@ -107,20 +131,22 @@ _zi_find_plugin() {
     return 0
   fi
 
-  # 2. Homebrew (prefix discovered dynamically; file existence verified).
-  if command -v brew >/dev/null 2>&1; then
-    local brew_prefix
-    brew_prefix=$(brew --prefix "$formula" 2>/dev/null)
-    if [[ -n $brew_prefix ]]; then
-      if [[ -r $brew_prefix/share/$formula/$relfile ]]; then
-        print -r -- "$brew_prefix/share/$formula/$relfile"
-	return 0
-      elif [[ -r $brew_prefix/$relfile ]]; then
-        print -r -- "$brew_prefix/$relfile"
-	return 0
+  # 2. Stable Homebrew opt symlinks (survive formula version upgrades).
+  for prefix in \
+    "${HOMEBREW_PREFIX:-}" \
+    /opt/homebrew \
+    /usr/local \
+    /home/linuxbrew/.linuxbrew; do
+    [[ -n $prefix ]] || continue
+    for plugin_file in \
+      "$prefix/opt/$formula/share/$formula/$relfile" \
+      "$prefix/opt/$formula/$relfile"; do
+      if [[ -r $plugin_file ]]; then
+        print -r -- "$plugin_file"
+        return 0
       fi
-    fi
-  fi
+    done
+  done
 
   # 3. Common distro / manual locations passed by the caller.
   for candidate in "$@"; do
@@ -129,6 +155,30 @@ _zi_find_plugin() {
       return 0
     fi
   done
+
+  # 4. Portable Homebrew fallback. Cache only a verified source-file path;
+  # formula upgrades normally keep it valid through Homebrew's opt symlink.
+  local cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/zsh/plugin-paths
+  local cache_file=$cache_dir/$formula
+  if [[ -r $cache_file ]]; then
+    IFS= read -r plugin_file < "$cache_file"
+    if [[ -r $plugin_file ]]; then
+      print -r -- "$plugin_file"
+      return 0
+    fi
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    prefix=$(brew --prefix "$formula" 2>/dev/null)
+    for plugin_file in "$prefix/share/$formula/$relfile" "$prefix/$relfile"; do
+      if [[ -n $prefix && -r $plugin_file ]]; then
+        mkdir -p "$cache_dir"
+        print -r -- "$plugin_file" >| "$cache_file"
+        print -r -- "$plugin_file"
+        return 0
+      fi
+    done
+  fi
 
   return 1
 }
